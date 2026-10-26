@@ -1,0 +1,30 @@
+name: Publish
+
+# Publishes @faces-sh/cli to npm with provenance. Runs only when a release is
+# published, or by hand; never on pull requests.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11.21.1
+      - run: npm ci
+      - run: npm run check
+      - run: npm publish --provenance --access public
+        env:
+          # Set only for the first publish; deleted once trusted publishing is on.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

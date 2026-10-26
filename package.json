@@ -1,0 +1,129 @@
+{
+  "name": "@faces-sh/cli",
+  "version": "1.0.0",
+  "description": "CLI for Faces: compile causal models from source texts, and get their causes",
+  "type": "module",
+  "author": "Headwaters Lab Inc.",
+  "license": "MIT",
+  "homepage": "https://faces.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/faces-sh/cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/faces-sh/cli/issues"
+  },
+  "bin": {
+    "faces": "./bin/run.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "postpack": "rm -f oclif.manifest.json",
+    "prepack": "npm run build && oclif manifest && oclif readme",
+    "dev": "tsx src/index.ts",
+    "check": "npm run build && node scripts/check.mjs"
+  },
+  "dependencies": {
+    "@oclif/core": "^4",
+    "@oclif/plugin-help": "^6",
+    "@toon-format/toon": "^4.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "oclif": "^4",
+    "tsx": "^4",
+    "typescript": "^5"
+  },
+  "oclif": {
+    "bin": "faces",
+    "dirname": "faces",
+    "commands": "./dist/commands",
+    "plugins": [
+      "@oclif/plugin-help"
+    ],
+    "topics": {
+      "auth": {
+        "description": "Login, logout, register, and identity"
+      },
+      "face": {
+        "description": "Create and manage faces"
+      },
+      "chat": {
+        "description": "Chat with a face on any supported model"
+      },
+      "compile": {
+        "description": "Compile source texts into a face"
+      },
+      "keys": {
+        "description": "Manage API keys (JWT required)"
+      },
+      "billing": {
+        "description": "Credits, subscription, and usage"
+      },
+      "account": {
+        "description": "Account-level operations"
+      },
+      "catalog": {
+        "description": "Local face catalog management"
+      },
+      "config": {
+        "description": "Local CLI configuration"
+      },
+      "style": {
+        "description": "Build and manage the styles a face applies on chat"
+      },
+      "compile:doc": {
+        "description": "Documents: create, compile, edit, pause, reset and delete"
+      },
+      "compile:thread": {
+        "description": "Threads: create, compile, edit, replace, pause, reset and delete"
+      },
+      "group": {
+        "description": "Groups of faces that work together"
+      },
+      "user": {
+        "description": "Other users: profiles, followers and following"
+      },
+      "face:avatar": {
+        "description": "A face's picture: list, get, make, upload and delete"
+      },
+      "face:tag": {
+        "description": "Tags on a face"
+      },
+      "group:tag": {
+        "description": "Tags on a group"
+      },
+      "billing:card": {
+        "description": "Saved payment cards"
+      },
+      "billing:subscription": {
+        "description": "Your plan: show, subscribe, switch and cancel"
+      },
+      "fidelity": {
+        "description": "Fidelity runs: ten blind turns, scored out of 10"
+      },
+      "benchmark": {
+        "description": "Compare a face against a reference model on its own material"
+      },
+      "session": {
+        "description": "Sessions: group turns with a face, then compact them"
+      },
+      "models": {
+        "description": "The models you can name, with their prices"
+      }
+    }
+  },
+  "files": [
+    "/bin",
+    "/dist",
+    "/oclif.manifest.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

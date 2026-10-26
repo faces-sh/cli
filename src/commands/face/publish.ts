@@ -33,6 +33,7 @@ export default class FacePublish extends BaseCommand {
     let data: Record<string, unknown>
     try {
       data = (await client.patch(`/v1/faces/${seg(args.alias)}/publish`, {
+        requireJwt: true,
         body: {published: true},
       })) as Record<string, unknown>
     } catch (err) {

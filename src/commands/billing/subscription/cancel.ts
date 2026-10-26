@@ -44,7 +44,7 @@ export default class BillingSubscriptionCancel extends BaseCommand {
 
     let data: unknown
     try {
-      data = await client.post('/v1/billing/subscription/cancel')
+      data = await client.post('/v1/billing/subscription/cancel', {requireJwt: true})
     } catch (err) {
       if (err instanceof FacesAPIError) this.error(`HTTP ${err.statusCode}: ${err.message}`)
       throw err

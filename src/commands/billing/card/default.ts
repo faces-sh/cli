@@ -22,7 +22,7 @@ export default class BillingCardDefault extends BaseCommand {
 
     let data: unknown
     try {
-      data = await client.post(`/v1/billing/payment-methods/${seg(args.card_id)}/default`)
+      data = await client.post(`/v1/billing/payment-methods/${seg(args.card_id)}/default`, {requireJwt: true})
     } catch (err) {
       if (err instanceof FacesAPIError) {
         if (err.statusCode === 404) this.error(`HTTP 404: ${err.message}\nList your cards with: faces billing:cards`)

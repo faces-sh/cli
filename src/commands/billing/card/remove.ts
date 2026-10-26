@@ -27,7 +27,7 @@ export default class BillingCardRemove extends BaseCommand {
 
     let data: unknown
     try {
-      data = await client.delete(`/v1/billing/payment-methods/${seg(args.card_id)}`)
+      data = await client.delete(`/v1/billing/payment-methods/${seg(args.card_id)}`, {requireJwt: true})
     } catch (err) {
       if (err instanceof FacesAPIError) {
         if (err.statusCode === 404) this.error(`HTTP 404: ${err.message}\nList your cards with: faces billing:cards`)

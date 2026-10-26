@@ -88,6 +88,7 @@ export default class FaceShare extends BaseCommand {
     let data: ShareResponse
     try {
       data = (await client.patch(`/v1/faces/${seg(args.alias)}/share`, {
+        requireJwt: true,
         body: {shared_with: next},
       })) as ShareResponse
     } catch (err) {

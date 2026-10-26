@@ -50,7 +50,7 @@ export default class BillingSubscriptionActivate extends BaseCommand {
     if (plan === want && cancelAtPeriodEnd) {
       let data: unknown
       try {
-        data = await client.post('/v1/billing/subscription/reactivate')
+        data = await client.post('/v1/billing/subscription/reactivate', {requireJwt: true})
       } catch (err) {
         if (err instanceof FacesAPIError) this.error(`HTTP ${err.statusCode}: ${err.message}`)
         throw err
@@ -83,7 +83,7 @@ export default class BillingSubscriptionActivate extends BaseCommand {
 
     let data: unknown
     try {
-      data = await client.post(`/v1/billing/checkout?plan=${want}&source=cli`)
+      data = await client.post(`/v1/billing/checkout?plan=${want}&source=cli`, {requireJwt: true})
     } catch (err) {
       if (err instanceof FacesAPIError) {
         if (err.statusCode === 409) this.error(`HTTP 409: ${err.message}\nChange plan with: faces billing:subscription:plan ${want}`)

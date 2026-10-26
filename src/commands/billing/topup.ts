@@ -35,7 +35,7 @@ export default class BillingTopup extends BaseCommand {
 
     let data: unknown
     try {
-      data = await client.post('/v1/billing/topup', {body: payload})
+      data = await client.post('/v1/billing/topup', {requireJwt: true, body: payload})
     } catch (err) {
       // A repeat of a recent top-up is held back, nothing charged. Charging it
       // again is the person's call, asked for here or with --allow-duplicate.
@@ -45,7 +45,7 @@ export default class BillingTopup extends BaseCommand {
       }
       await this.confirmOrRefuse(`${err.message}\nCharge $${amount.toFixed(2)} again anyway?`, false)
       try {
-        data = await client.post('/v1/billing/topup', {body: {...payload, allow_duplicate: true}})
+        data = await client.post('/v1/billing/topup', {requireJwt: true, body: {...payload, allow_duplicate: true}})
       } catch (again) {
         this.fail(again, flags.card)
       }

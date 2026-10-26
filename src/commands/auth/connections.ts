@@ -16,7 +16,7 @@ export default class AuthConnections extends BaseCommand {
     const {flags} = await this.parse(AuthConnections)
     const client = this.makeClient(flags)
 
-    const data = await client.get('/v1/oauth')
+    const data = await client.get('/v1/oauth', {requireJwt: true})
 
     if (!this.jsonEnabled()) {
       const rows = data as Array<{

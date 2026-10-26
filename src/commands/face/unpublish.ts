@@ -21,6 +21,7 @@ export default class FaceUnpublish extends BaseCommand {
     let data: Record<string, unknown>
     try {
       data = (await client.patch(`/v1/faces/${seg(args.alias)}/publish`, {
+        requireJwt: true,
         body: {published: false},
       })) as Record<string, unknown>
     } catch (err) {

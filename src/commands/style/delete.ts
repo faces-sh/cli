@@ -6,11 +6,12 @@ import {faceStyles, seg} from '../../utils.js'
 
 export default class StyleDelete extends BaseCommand {
   static description =
-    "Delete a face's built style. A face holds one per medium, so name which with --medium, or pass " +
-    '--all to remove every one. On a face with several, an unscoped delete is refused rather than taking ' +
-    'them all. The material a style was built from is always kept, so it can be built again without ' +
-    're-uploading; to remove source text use compile:doc:delete, or compile:doc:reset to withdraw it from ' +
-    'the face while keeping it.'
+    "Delete a face's style build. A face holds one per medium, so name which with --medium, or pass " +
+    '--all to delete every one. On a face with several, an unscoped delete is refused rather than taking ' +
+    'them all. Only the build goes: the uploaded material is kept, so it can be built again without ' +
+    're-uploading, and what the face learned about how it writes from its documents and threads stays ' +
+    'until they are deleted. To remove a style completely, delete that medium\'s documents and threads ' +
+    '(compile:doc:delete, compile:thread:delete), then the build.'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> alice --medium email',
@@ -20,11 +21,11 @@ export default class StyleDelete extends BaseCommand {
   static flags = {
     ...BaseCommand.baseFlags,
     medium: Flags.string({
-      description: 'Delete only this medium\'s style, leaving the rest. See faces style:versions <alias>.',
+      description: 'Delete only this medium\'s style build, leaving the rest. See faces style:versions <alias>.',
       exclusive: ['all'],
     }),
     all: Flags.boolean({
-      description: 'Delete every style the face has. Required when it holds more than one.',
+      description: 'Delete every style build the face has. Required when it holds more than one.',
       default: false,
       exclusive: ['medium'],
     }),
@@ -42,13 +43,15 @@ export default class StyleDelete extends BaseCommand {
     if (!flags.yes) {
       const media = await this.mediaOf(client, args.alias)
       const scope = flags.medium
-        ? `its ${flags.medium} style`
+        ? `the ${flags.medium} style build`
         : media.length > 1
-          ? `all ${media.length} of its styles (${media.join(', ')})`
+          ? `all ${media.length} style builds (${media.join(', ')})`
           : media.length === 1
-            ? `its ${media[0]} style`
-            : 'its style'
-      const what = `'${args.alias}' will forget ${scope}. Its documents, threads and uploaded material are kept.`
+            ? `the ${media[0]} style build`
+            : 'the style build'
+      const what =
+        `This deletes ${scope} of '${args.alias}'. Its documents, threads and uploaded material are kept, ` +
+        'and so is what it learned from them.'
       await this.confirmOrRefuse(`${what}\nDelete?`, false)
     }
 
@@ -90,8 +93,8 @@ export default class StyleDelete extends BaseCommand {
     const medium = data.medium as string | undefined
     this.log(
       scoped && medium
-        ? `'${args.alias}' has forgotten its ${medium} style. Its other styles and all its source material are untouched.`
-        : `'${args.alias}' has forgotten its styles. Its source material is untouched.`,
+        ? `Deleted the ${medium} style build of '${args.alias}'. Its other styles, its sources and what it learned from them are untouched.`
+        : `Deleted the style builds of '${args.alias}'. Its sources and what it learned from them are untouched.`,
     )
     this.log(`Build it again with: faces style:make ${args.alias} --all`)
     return data

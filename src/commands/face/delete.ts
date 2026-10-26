@@ -24,7 +24,7 @@ export default class FaceDelete extends BaseCommand {
 
     let data: unknown
     try {
-      data = await client.delete(`/v1/faces/${seg(args.face_id)}`)
+      data = await client.delete(`/v1/faces/${seg(args.face_id)}`, {requireJwt: true})
     } catch (err) {
       if (err instanceof FacesAPIError && err.statusCode === 404 && isMeAlias(args.face_id)) this.error(`HTTP 404: ${err.message}\n${ME_MISSING}`)
       if (err instanceof FacesAPIError) this.error(`HTTP ${err.statusCode}: ${err.message}`)

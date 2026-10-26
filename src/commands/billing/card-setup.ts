@@ -24,7 +24,7 @@ export default class BillingCardSetup extends BaseCommand {
 
     let data: Record<string, unknown>
     try {
-      data = await client.post('/v1/billing/card-setup', flags.default ? {} : {body: {make_default: false}}) as Record<string, unknown>
+      data = await client.post('/v1/billing/card-setup', flags.default ? {requireJwt: true} : {requireJwt: true, body: {make_default: false}}) as Record<string, unknown>
     } catch (err) {
       if (err instanceof FacesAPIError) this.error(`HTTP ${err.statusCode}: ${err.message}`)
       throw err

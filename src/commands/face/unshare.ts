@@ -62,7 +62,7 @@ export default class FaceUnshare extends BaseCommand {
 
     let data: unknown
     try {
-      data = await client.patch(`/v1/faces/${seg(args.alias)}/share`, {body: {shared_with: next}})
+      data = await client.patch(`/v1/faces/${seg(args.alias)}/share`, {requireJwt: true, body: {shared_with: next}})
     } catch (err) {
       if (err instanceof FacesAPIError) this.error(`HTTP ${err.statusCode}: ${err.message}`)
       throw err

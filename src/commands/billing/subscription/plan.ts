@@ -62,7 +62,7 @@ export default class BillingSubscriptionPlan extends BaseCommand {
 
     let data: Record<string, unknown>
     try {
-      data = await client.post(`/v1/billing/subscription/plan?plan=${want}`) as Record<string, unknown>
+      data = await client.post(`/v1/billing/subscription/plan?plan=${want}`, {requireJwt: true}) as Record<string, unknown>
     } catch (err) {
       // A server error can come after the switch went through, and asking
       // again would then switch a plan that is already switched. Read the plan

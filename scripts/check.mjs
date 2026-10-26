@@ -892,6 +892,51 @@ async function keyFields() {
 }
 await keyFields()
 
+// --- commands the API takes only from a signed-in session send the login -----
+// With an API key saved, the CLI sends the key by default. The API refuses keys
+// on sharing, publishing, deleting a face, linked accounts and billing changes,
+// so those commands must send the saved login instead.
+async function loginOnlyCommands() {
+  const seen = []
+  const srv = http.createServer((req, res) => {
+    req.on('data', () => {})
+    req.on('end', () => {
+      seen.push({auth: req.headers.authorization, call: `${req.method} ${req.url.split('?')[0]}`})
+      const send = (body) => { res.writeHead(200, {'content-type': 'application/json'}); res.end(JSON.stringify(body)) }
+      if (req.method === 'GET' && req.url.startsWith('/v1/faces/alice')) return send({id: 'f1', username: 'alice', shared_with: ['bob']})
+      if (req.method === 'GET' && req.url === '/v1/billing/subscription') return send({plan: 'pro', status: 'active', cancel_at_period_end: true})
+      if (req.url === '/v1/oauth') return send([])
+      send({})
+    })
+  })
+  await new Promise((r) => srv.listen(0, r))
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'faces-check-'))
+  const env = {...process.env, HOME: home, FACES_BASE_URL: `http://127.0.0.1:${srv.address().port}`, FACES_TOKEN: 'jwt-check', FACES_API_KEY: 'sk-faces-check'}
+  const run = (args) => new Promise((r) => execFile(process.execPath, ['bin/run.js', ...args], {env}, () => r()))
+  try {
+    for (const args of [
+      ['face:publish', 'alice', '--yes', '--json'], ['face:unpublish', 'alice', '--json'],
+      ['face:share', 'alice', '--add', 'carol', '--yes', '--json'], ['face:unshare', 'alice', '--from', 'bob', '--yes', '--json'],
+      ['face:delete', 'alice', '--yes', '--json'], ['auth:connections', '--json'],
+      ['billing:topup', '--amount', '10', '--yes', '--json'], ['billing:card:remove', 'pm_1', '--yes', '--json'],
+      ['billing:card-setup', '--json'], ['billing:card:default', 'pm_1', '--json'],
+      ['billing:subscription:activate', '--json'],
+    ]) await run(args)
+    const loginOnly = seen.filter((s) => s.call !== 'GET /auth/me' && (s.call.startsWith('GET /v1/oauth') || !s.call.startsWith('GET ')))
+    eq('login-only commands: each one reached the API', [...new Set(loginOnly.map((s) => s.call))].sort(), [
+      'DELETE /v1/billing/payment-methods/pm_1', 'DELETE /v1/faces/alice', 'GET /v1/oauth',
+      'PATCH /v1/faces/alice/publish', 'PATCH /v1/faces/alice/share',
+      'POST /v1/billing/card-setup', 'POST /v1/billing/payment-methods/pm_1/default',
+      'POST /v1/billing/subscription/reactivate', 'POST /v1/billing/topup',
+    ])
+    eq('login-only commands: none sent the API key', loginOnly.filter((s) => s.auth !== 'Bearer jwt-check').map((s) => s.call), [])
+  } finally {
+    srv.close()
+    fs.rmSync(home, {recursive: true, force: true})
+  }
+}
+await loginOnlyCommands()
+
 // --- refusals and confirmations, through the real commands -------------------
 async function errorsAndConfirmations() {
   const seen = []

@@ -196,7 +196,7 @@ export default class FaceList extends BaseCommand {
           if (f.formula) {
             suffix = `  [composite: ${f.formula}]`
           }
-          // A face with a captured style answers as the person rather than as a
+          // A face with a built style answers as the person rather than as a
           // generic assistant, so it is worth seeing at a glance which do. The
           // media are shown with it because they are what --style may ask for.
           const media = faceStyles(f)

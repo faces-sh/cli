@@ -46,7 +46,7 @@ export default class StyleVersions extends BaseCommand {
         if (await faceExists(client, args.alias)) {
           if (this.jsonEnabled()) return {self_face: args.alias, versions: []}
           // Versions are the owner's to see and make; telling someone to
-          // capture a style on another account's face sends them to a refusal.
+          // build a style on another account's face sends them to a refusal.
           if ((await ownsFace(client, args.alias)) === false) {
             this.log(`'${args.alias}' belongs to another account. Only its owner can see or build its style versions.`)
             return {self_face: args.alias, versions: []}

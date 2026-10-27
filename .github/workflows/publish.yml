@@ -1,13 +1,16 @@
 name: Publish
 
 # Publishes @faces-sh/cli to npm with provenance. Runs only when a release is
-# published, and only after the npm environment's reviewer approves it.
+# published, from a `v*` tag (the npm environment allows nothing else), and only for a
+# commit on main that the release gate passed. Each release opens a review issue in
+# the gate; npm allows a clean unpublish for 72 hours.
 on:
   release:
     types: [published]
 
 permissions:
   contents: read
+  statuses: read
   id-token: write
 
 jobs:
@@ -15,6 +18,33 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm
     steps:
+      - name: The commit is on main and passed the release gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cmp=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
+          case "$cmp" in identical|behind) ;; *) echo "$GITHUB_SHA is not on main ($cmp)"; exit 1 ;; esac
+          read -r gate run_url < <(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses?per_page=100" \
+            --jq '[.[] | select(.context == "faces/rules" and .creator.login == "faces-release-gate[bot]")][0] | "\(.state) \(.target_url)"')
+          [ "$gate" = success ] || { echo "faces/rules on $GITHUB_SHA is '${gate:-missing}'"; exit 1; }
+          echo "run=${run_url##*/}" >> "$GITHUB_OUTPUT"
+        id: gate
+      - id: trigger
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GATE_TRIGGER_CLIENT_ID }}
+          private-key: ${{ secrets.GATE_TRIGGER_KEY }}
+          owner: faces-sh
+          repositories: release-gate
+      - name: The pass came from the reviewed gate on main
+        env:
+          GH_TOKEN: ${{ steps.trigger.outputs.token }}
+          RUN: ${{ steps.gate.outputs.run }}
+        run: |
+          [[ "$RUN" =~ ^[0-9]+$ ]] || { echo "no gate run behind the status"; exit 1; }
+          read -r branch path < <(gh api "repos/faces-sh/release-gate/actions/runs/$RUN" --jq '"\(.head_branch) \(.path)"')
+          [ "$branch" = main ] && [ "$path" = .github/workflows/gate.yml ] \
+            || { echo "the gate run $RUN came from '$branch' '$path', not gate.yml on main"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -24,7 +54,5 @@ jobs:
       - run: npm install -g npm@11.21.1
       - run: npm ci
       - run: npm run check
+      # Trusted publishing: npm accepts this workflow, in the npm environment, and no token.
       - run: npm publish --provenance --access public
-        env:
-          # Set only for the first publish; deleted once trusted publishing is on.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

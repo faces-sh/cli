@@ -54,7 +54,7 @@ export default class StyleStatus extends BaseCommand {
     }
 
     // A failed job is not a successful wait: scripts and agents read the exit
-    // code, and 0 read as a captured style.
+    // code, and 0 read as a built style.
     if (data.status === 'failed') process.exitCode = 1
     if (json) return publicJob(data)
     for (const line of formatBuildReport(data)) this.log(line)
@@ -102,7 +102,7 @@ export default class StyleStatus extends BaseCommand {
       // stamped have neither field and show a dash.
       medium: jobMedium(j) ?? '-',
       when: String(j.created_at ?? '').slice(0, 19).replace('T', ' ') || '-',
-      // Automatic captures install without anyone asking, so the list is where
+      // Automatic style builds install without anyone asking, so the list is where
       // somebody finds out a style changed on its own. Last column, so a
       // reader of the columns before it is undisturbed.
       by: (j.report as Record<string, unknown> | null | undefined)?.auto ? 'auto' : 'manual',

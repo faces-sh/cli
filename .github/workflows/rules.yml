@@ -1,0 +1,45 @@
+name: Rules
+
+# Asks the private release gate to check this commit against the standing rules. The
+# answer comes back as the `faces/rules` status on the commit, which main requires.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+  release:
+    types: [published, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GATE_TRIGGER_CLIENT_ID }}
+          private-key: ${{ secrets.GATE_TRIGGER_KEY }}
+          owner: faces-sh
+          repositories: release-gate
+      - name: Request the check
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          EVENT: ${{ github.event_name }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          case "$EVENT" in
+            pull_request) set -- -f "inputs[kind]=pr" -f "inputs[sha]=$PR_SHA" -f "inputs[pr]=$PR" ;;
+            push) set -- -f "inputs[kind]=push" -f "inputs[sha]=$GITHUB_SHA" -f "inputs[before]=$BEFORE" ;;
+            release) set -- -f "inputs[kind]=release" -f "inputs[sha]=$GITHUB_SHA" -f "inputs[tag]=$TAG" ;;
+          esac
+          # The trigger app may only start workflows, so this names the branch rather
+          # than letting gh look it up.
+          gh api -X POST repos/faces-sh/release-gate/actions/workflows/gate.yml/dispatches \
+            -f ref=main -f "inputs[repo]=$REPO_NAME" "$@"

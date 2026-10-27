@@ -144,7 +144,7 @@ export class FacesAPIError extends Error {
  *
  * These hinge on the account, which no single command owns: allowances are
  * spent by compiling and chat alike, credit by everything, and an unfinished
- * ChatGPT reply can end a chat, a compile interview or a capture. Attached
+ * ChatGPT reply can end a chat, a compile interview or a style build. Attached
  * here so every command says it, rather than the few that remembered.
  *
  * The server's message is shown as it is; these only add the command that

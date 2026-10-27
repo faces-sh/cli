@@ -75,8 +75,8 @@ export interface Selectable {
    */
   isCorpus: boolean
   /**
-   * Messages a capture would actually read, by the same rule intake applies.
-   * Zero means the capture fails on this source. Undefined on documents and on
+   * Messages a style build would actually read, by the same rule intake applies.
+   * Zero means the style build fails on this source. Undefined on documents and on
    * servers that predate the field.
    */
   authored?: number
@@ -466,9 +466,9 @@ export function servedBy(report: Record<string, unknown>): string | undefined {
 }
 
 /**
- * Why an automatic capture ran, in one phrase, or undefined for a manual one.
+ * Why an automatic style build ran, in one phrase, or undefined for a manual one.
  *
- * `report.auto` is the only mark an automatic capture carries. Without it in
+ * `report.auto` is the only mark an automatic style build carries. Without it in
  * the output, a style that changed overnight looks like something nobody did.
  */
 export function autoTrigger(job: Record<string, unknown>): string | undefined {

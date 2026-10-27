@@ -224,7 +224,7 @@ export default class AccountPreferences extends BaseCommand {
       const width = Math.max(...Object.keys(thresholds).map((m) => m.length)) + 1
       for (const [medium, words] of Object.entries(thresholds)) {
         // Listed by the server with the rest, but writing with no particular
-        // form has no style of its own, so it is never captured on its own.
+        // form has no style of its own, so it is never built on its own.
         const note = medium === 'other' ? '  (never built automatically)' : ''
         this.log(`  ${(medium + ':').padEnd(width)} ${words}${note}`)
       }

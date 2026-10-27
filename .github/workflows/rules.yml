@@ -1,0 +1,42 @@
+name: Rules
+
+# Asks the private release gate to check this commit against the standing rules. The
+# answer comes back as the `faces/rules` status on the commit, which main requires.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GATE_TRIGGER_CLIENT_ID }}
+          private-key: ${{ secrets.GATE_TRIGGER_KEY }}
+          owner: faces-sh
+          repositories: release-gate
+      - name: Request the check
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          EVENT: ${{ github.event_name }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          case "$EVENT" in
+            pull_request) set -- -f kind=pr -f sha="$PR_SHA" -f pr="$PR" ;;
+            push) set -- -f kind=push -f sha="$GITHUB_SHA" -f before="$BEFORE" ;;
+            release) set -- -f kind=release -f sha="$GITHUB_SHA" -f tag="$TAG" ;;
+          esac
+          gh workflow run gate.yml -R faces-sh/release-gate -f repo="$REPO_NAME" "$@"

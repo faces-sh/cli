@@ -193,7 +193,7 @@ export default class StyleMake extends BaseCommand {
         // A live thread is the exception. It compiles as its messages arrive
         // and is billed per message, so sweeping an unfinished one would charge
         // for turns the user did not send. Those wait to be named.
-        // The server reports how many messages a capture would actually read.
+        // The server reports how many messages a style build would actually read.
         // Zero is a guaranteed intake failure, and one bad source fails the
         // whole request, so a sweep must not pull them in.
         if (s.authored === 0) {
@@ -346,7 +346,7 @@ export default class StyleMake extends BaseCommand {
   /** Translate a pre-flight refusal into the decision the user has to make. */
   private reportStartFailure(err: unknown): never {
     if (!(err instanceof FacesAPIError)) throw err
-    // A capture for this face and medium is already running. Starting another
+    // A style build for this face and medium is already running. Starting another
     // used to run both in full and keep only the later one, so the server now
     // refuses and names the running job. Following it is the whole answer.
     if (err.errorCode === 'build_in_progress') {

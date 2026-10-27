@@ -35,8 +35,11 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           case "$EVENT" in
-            pull_request) set -- -f kind=pr -f sha="$PR_SHA" -f pr="$PR" ;;
-            push) set -- -f kind=push -f sha="$GITHUB_SHA" -f before="$BEFORE" ;;
-            release) set -- -f kind=release -f sha="$GITHUB_SHA" -f tag="$TAG" ;;
+            pull_request) set -- -f "inputs[kind]=pr" -f "inputs[sha]=$PR_SHA" -f "inputs[pr]=$PR" ;;
+            push) set -- -f "inputs[kind]=push" -f "inputs[sha]=$GITHUB_SHA" -f "inputs[before]=$BEFORE" ;;
+            release) set -- -f "inputs[kind]=release" -f "inputs[sha]=$GITHUB_SHA" -f "inputs[tag]=$TAG" ;;
           esac
-          gh workflow run gate.yml -R faces-sh/release-gate -f repo="$REPO_NAME" "$@"
+          # The trigger app may only start workflows, so this names the branch rather
+          # than letting gh look it up.
+          gh api -X POST repos/faces-sh/release-gate/actions/workflows/gate.yml/dispatches \
+            -f ref=main -f "inputs[repo]=$REPO_NAME" "$@"

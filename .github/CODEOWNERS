@@ -1,2 +1,5 @@
-# Changes to what protects this repo need both partners.
+# Changes to what protects this repo need both partners: the workflows, and what
+# the test check runs.
 /.github/ @maestrouniverso
+/package.json @maestrouniverso
+/scripts/ @maestrouniverso

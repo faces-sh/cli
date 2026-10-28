@@ -7,7 +7,7 @@ export default class SessionCreate extends BaseCommand {
   static description =
     'Start a session with a face. A session groups the turns of one conversation with one face: pass its id ' +
     'with --session on chat, causes or decide, then compact it with session:compact. Opening one is free; ' +
-    'each turn costs what it costs without one. A session expires 30 days after its last turn.'
+    'each turn costs what it costs without one. A session expires 30 days after its last turn. Sessions are now called conversations: see faces conversation:create.'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> alice',

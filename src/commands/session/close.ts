@@ -7,7 +7,7 @@ import {seg} from '../../utils.js'
 export default class SessionClose extends BaseCommand {
   static description =
     'Close a session. A closed session takes no more turns and cannot be compacted or read. Its ' +
-    'compactions stay usable until they expire. Free.'
+    'compactions stay usable until they expire. Free. Sessions are now called conversations: see faces conversation:close.'
 
   static examples = ['<%= config.bin %> <%= command.id %> fs_SESSION_ID --yes']
 

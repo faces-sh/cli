@@ -703,11 +703,12 @@ export const MEDIUM_FLAG_DESCRIPTION =
   'out and the medium is inferred from your message. With --style, leave it out or give the same medium.'
 
 export const SESSION_FLAG_DESCRIPTION =
-  'Add this turn to a session, by id (from faces session:create). The session must be with this face.'
+  'The old name for --conversation, still accepted: add this turn to a session (a conversation), by id ' +
+  '(from faces session:create or conversation:create). The session must be with this face.'
 
 export const COMPACTION_FLAG_DESCRIPTION =
-  'Read a compaction, by id (from faces session:compact), alongside the messages sent. It must be of a ' +
-  'session with this face.'
+  'Read a compaction, by id (from faces conversation:compact or session:compact), alongside the messages ' +
+  'sent. It must be of this face.'
 
 /** The request fields for --style, --medium, --session and --compaction, when given. */
 export function chatExtras(flags: {style?: string; medium?: string; session?: string; compaction?: string}): Record<string, string> {

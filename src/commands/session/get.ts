@@ -5,7 +5,7 @@ import {SESSIONS_PATH, Session, sessionHint, sessionLines} from '../../session.j
 import {seg} from '../../utils.js'
 
 export default class SessionGet extends BaseCommand {
-  static description = 'Read a session: its face, status, how many turns it holds, and when it expires. Free.'
+  static description = 'Read a session: its face, status, how many turns it holds, and when it expires. Free. Sessions are now called conversations: see faces conversation:get.'
 
   static examples = ['<%= config.bin %> <%= command.id %> fs_SESSION_ID']
 

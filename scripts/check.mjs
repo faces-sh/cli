@@ -68,6 +68,7 @@ import {pollCompileProgress, pollUntilPaused} from '../dist/poll.js'
 import {childPath} from '../dist/paths.js'
 import {score10} from '../dist/fidelity.js'
 import {resultLines, benchmarkHint} from '../dist/benchmark.js'
+import {conversationHint, parsePremises, premiseValue, conversationFields, clientItems, conversationLines, itemLines, premiseLines, staleDecisionLines} from '../dist/conversation.js'
 
 let failed = 0
 let ran = 0
@@ -1530,6 +1531,169 @@ eq('human body: warnings left out, the rest kept', withoutWarnings({document_id:
 // --- llm-costs: rows carry lab, never provider -------------------------------
 eq('llm-costs: lab read', llmCostLab({llm_model: 'gpt-5.4', lab: 'openai'}), 'openai')
 eq('llm-costs: no lab, no provider fallback', llmCostLab({llm_model: 'x', provider: 'someone'}), '')
+
+// --- conversations: premises as typed, items as read, turns as sent -----------
+eq('premise value: JSON when it is JSON', [premiseValue('50000'), premiseValue('true'), premiseValue('null'), premiseValue('["a"]'), premiseValue('{"max":3}')], [50000, true, null, ['a'], {max: 3}])
+eq('premise value: text otherwise', [premiseValue('annual'), premiseValue('Acme, Inc.'), premiseValue(''), premiseValue('  ')], ['annual', 'Acme, Inc.', '', '  '])
+eq('premise value: a quoted number stays text', premiseValue('"007"'), '007')
+eq('premise value: an infinite number stays text, never null', premiseValue('1e999'), '1e999')
+eq('premises: value split at the first =', parsePremises(['q=a=b']), [{key: 'q', value: 'a=b'}])
+eq('premises: descriptions matched by key, not position',
+  parsePremises(['a=1', 'b=false'], ['b=the vendor is certified', 'a= the budget ']),
+  [{key: 'a', value: 1, description: 'the budget'}, {key: 'b', value: false, description: 'the vendor is certified'}])
+const premiseError = (p, d) => { try { parsePremises(p, d); return undefined } catch (e) { return e.message } }
+eq('premises: no = is refused', /takes key=value \(got 'oops'\)/.test(premiseError(['oops'])), true)
+eq('premises: empty key is refused', /takes key=value/.test(premiseError(['=1'])), true)
+eq('premises: a bad key is refused before sending', /1 to 64 letters, digits, _ or - \(got 'has space'\)/.test(premiseError(['has space=1'])), true)
+eq('premises: a 65-character key is refused', /1 to 64/.test(premiseError([`${'k'.repeat(65)}=1`])), true)
+eq('premises: a 64-character key is taken', parsePremises([`${'k'.repeat(64)}=1`]).length, 1)
+eq('premises: a key twice is refused', /sets 'a' twice/.test(premiseError(['a=1', 'a=2'])), true)
+eq('premises: a description with no premise is refused', /names 'b', which no --premise sets/.test(premiseError(['a=1'], ['b=x'])), true)
+eq('premises: an empty description is refused', /is empty/.test(premiseError(['a=1'], ['a=  '])), true)
+eq('premises: two descriptions for one key are refused', /describes 'a' twice/.test(premiseError(['a=1'], ['a=x', 'a=y'])), true)
+eq('premises: none is none', parsePremises(), [])
+
+eq('turn fields: none given, nothing sent', conversationFields({}), {})
+eq('turn fields: conversation, premises and causes_visible',
+  conversationFields({conversation: 'fs_1', premise: ['a=1'], 'premise-description': ['a=x'], 'causes-visible': false}),
+  {conversation: 'fs_1', premises: [{key: 'a', value: 1, description: 'x'}], causes_visible: false})
+eq('turn fields: --session counts as the conversation', conversationFields({session: 'fs_1', premise: ['a=1']}), {premises: [{key: 'a', value: 1}]})
+eq('turn fields: the same id under both names is fine', conversationFields({conversation: 'fs_1', session: 'fs_1'}), {conversation: 'fs_1'})
+const turnError = (f) => { try { conversationFields(f); return undefined } catch (e) { return e.message } }
+eq('turn fields: two different ids are refused', /not two different ids/.test(turnError({conversation: 'fs_1', session: 'fs_2'})), true)
+eq('turn fields: premises with no conversation are refused', /belong to a conversation/.test(turnError({premise: ['a=1']})), true)
+eq('turn fields: causes_visible with no conversation is refused', /belong to a conversation/.test(turnError({'causes-visible': true})), true)
+eq('client items: premises first, then messages', clientItems(['hi'], [{key: 'a', value: 1}]), [{key: 'a', value: 1}, {type: 'message', role: 'user', content: 'hi'}])
+
+eq('conversation lines: any face, causes hidden', conversationLines({object: 'conversation', id: 'fs_1', model: null, turns: 0, items: 2, causes_visible: false, status: 'open'}), [
+  'conversation: fs_1', 'face:         any of your faces', 'status:       open', 'turns:        0', 'items:        2', 'causes:       each face reads its own only'])
+eq('conversation lines: one face', conversationLines({object: 'conversation', id: 'fs_1', model: 'alice', causes_visible: true})[1], 'face:         alice')
+
+const loggedItems = [
+  {id: 'ci_1', type: 'function_call', name: 'premise', call_id: 'prem_1', arguments: '{"key": "budget_usd"}'},
+  {id: 'ci_2', type: 'function_call_output', call_id: 'prem_1', output: '{"value": 50000, "description": "the most we can spend"}'},
+  {id: 'ci_3', type: 'message', role: 'user', content: 'Worth a look?'},
+  {id: 'ci_4', type: 'message', role: 'assistant', name: 'alice', model: 'gpt-x', cause: 'Money is tight.', content: [{type: 'output_text', text: 'Yes, carefully.'}]},
+  {id: 'ci_5', type: 'function_call', name: 'decision', call_id: 'dec_1', face: 'alice', model: 'jev-1', arguments: '{"id": "sign", "instructions": "Sign the contract?"}'},
+  {id: 'ci_6', type: 'function_call_output', call_id: 'dec_1', face: 'alice', model: 'jev-1', output: '{"answer": {"type": "choice", "choice": "no"}, "cause": "Not certified."}'},
+  {id: 'ci_7', type: 'function_call_output', call_id: 'prem_2', output: '{"value": "x"}'},
+  {id: 'ci_8', type: 'message', role: 'assistant', name: 'alice', cause: 'Only this.', content: ''},
+]
+eq('item lines: each message, decision and premise once, in order', itemLines(loggedItems), [
+  'ci_2   premise  budget_usd = 50000   (the most we can spend)',
+  'ci_3   you: Worth a look?',
+  'ci_4   alice (gpt-x): Yes, carefully.',
+  '       cause: Money is tight.',
+  'ci_6   alice (jev-1) decided: Sign the contract? -> no',
+  '       cause: Not certified.',
+  'ci_7   output: {"value": "x"}',
+  "ci_8   alice's cause: Only this.",
+])
+eq('item lines: a text value prints quoted, a number does not',
+  itemLines([{id: 'ci_1', type: 'function_call', name: 'premise', call_id: 'p', arguments: '{"key":"k"}'}, {id: 'ci_2', type: 'function_call_output', call_id: 'p', output: '{"value":"50000"}'}]),
+  ['ci_2   premise  k = "50000"'])
+eq('premise lines: current values', premiseLines({budget_usd: {value: 50000, description: 'the most we can spend'}, ok: {value: false, description: null}}),
+  ['premises:', '  budget_usd = 50000   (the most we can spend)', '  ok = false'])
+eq('premise lines: none', premiseLines({}), ['premises: none'])
+eq('conversation hint: a new premise names the flag to add',
+  conversationHint(new FacesAPIError(422, "premise 'rates' is new: give its `description` (what it means, in plain words)")),
+  'Say what it means: --premise-description rates="what it means, in plain words"')
+eq('conversation hint: another 422 adds nothing', conversationHint(new FacesAPIError(422, '`causes_visible` is true or false')), undefined)
+eq('stale decisions: none prints nothing', [staleDecisionLines([]), staleDecisionLines(undefined)], [[], []])
+eq('stale decisions: what changed under each', staleDecisionLines([{call_id: 'dec_1', question: {id: 'sign', instructions: 'Sign the contract?'}, choice: 'no', face: 'alice', changed: {vendor_certified: {was: true, now: false}}}]), [
+  '1 earlier decision was made under a value you just changed. Nothing was decided again:',
+  '  alice: Sign the contract? -> no   [dec_1]',
+  '    vendor_certified: was true, now false',
+])
+
+async function conversationsOverHttp() {
+  const seen = []
+  const srv = http.createServer((req, res) => {
+    let b = ''
+    req.on('data', (c) => { b += c })
+    req.on('end', () => {
+      const send = (status, body) => { res.writeHead(status, {'content-type': 'application/json'}); res.end(JSON.stringify(body)) }
+      const body = b ? JSON.parse(b) : undefined
+      seen.push({method: req.method, url: req.url, body})
+      const conv = {object: 'conversation', id: 'fs_1', model: body?.model ?? null, turns: 0, items: body?.items?.length ?? 0, causes_visible: body?.causes_visible ?? true, status: 'open'}
+      if (req.url === '/v1/conversations' && req.method === 'POST') return send(200, conv)
+      if (req.url === '/v1/conversations/gone') return send(404, {detail: 'no such conversation, or it has expired'})
+      if (req.url === '/v1/conversations/any/compact') {
+        if (!body?.model) return send(422, {detail: 'this conversation takes any face: name the one to compact in `model`'})
+        return send(200, {object: 'cause.compaction', compaction_id: 'fcmp_1', cause: 'Position.', turns: 2})
+      }
+      if (req.url === '/v1/conversations/fs_1/items' && req.method === 'POST') {
+        return send(200, {object: 'list', data: [], premises: {vendor_certified: {value: false, description: 'certified'}},
+          decisions_made_under_old_values: [{call_id: 'dec_1', question: {instructions: 'Sign?'}, choice: 'no', face: 'alice', changed: {vendor_certified: {was: true, now: false}}}]})
+      }
+      if (req.url === '/v1/conversations/fs_1' && req.method === 'DELETE') return send(200, {id: 'fs_1', object: 'conversation.deleted', deleted: true})
+      if (req.url === '/v1/causes') return send(200, {cause: 'Because.'})
+      if (req.url.startsWith('/v1/models')) return send(200, {data: []})
+      if (req.url === '/v1/chat/completions') return send(200, {object: 'chat.completion', choices: [{message: {content: 'ok'}}]})
+      send(404, {detail: 'not here'})
+    })
+  })
+  await new Promise((r) => srv.listen(0, r))
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'faces-check-'))
+  const env = {...process.env, HOME: home, FACES_BASE_URL: `http://127.0.0.1:${srv.address().port}`, FACES_API_KEY: 'sk-check'}
+  const run = (args) => new Promise((r) => {
+    const child = execFile(process.execPath, ['bin/run.js', ...args], {env}, (err, stdout, stderr) => r({code: err?.code ?? 0, out: stdout + stderr}))
+    child.stdin.end()
+  })
+  const last = (url) => seen.filter((s) => s.url === url).at(-1)?.body
+  try {
+    let r = await run(['conversation:create'])
+    eq('conversation:create: no face, causes visible, no items', last('/v1/conversations'), {causes_visible: true})
+    eq('conversation:create: any face reads as such', /face:\s+any of your faces/.test(r.out), true)
+    await run(['conversation:create', 'alice', '--no-causes-visible', '-m', 'hi', '--premise', 'a=1', '--premise-description', 'a=the budget'])
+    eq('conversation:create: face, causes hidden, premises then messages', last('/v1/conversations'),
+      {causes_visible: false, model: 'alice', items: [{key: 'a', value: 1, description: 'the budget'}, {type: 'message', role: 'user', content: 'hi'}]})
+    seen.length = 0
+    r = await run(['conversation:create', 'alice@gpt-x'])
+    eq('conversation:create: a model is refused before sending', [r.code, /face alone: alice/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['conversation:add', 'fs_1', '--premise', 'vendor_certified=false'])
+    eq('conversation:add: sent as items', last('/v1/conversations/fs_1/items'), {items: [{key: 'vendor_certified', value: false}]})
+    eq('conversation:add: decisions under old values, readably',
+      [/1 earlier decision was made under a value you just changed/.test(r.out), /alice: Sign\? -> no/.test(r.out), /vendor_certified: was true, now false/.test(r.out)], [true, true, true])
+    seen.length = 0
+    r = await run(['conversation:add', 'fs_1'])
+    eq('conversation:add: nothing to add is refused before sending', [r.code, seen.length], [2, 0])
+    r = await run(['conversation:add', 'fs_1', ...Array.from({length: 21}, (_, i) => ['-m', `m${i}`]).flat()])
+    eq('conversation:add: more than 20 is refused before sending', [r.code, /At most 20/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['conversation:get', 'gone'])
+    eq('conversation:get: 404 says how to start another', /faces conversation:create/.test(r.out), true)
+    r = await run(['conversation:compact', 'any'])
+    eq('conversation:compact: any-face 422 says to name the face', /faces conversation:compact any <face>/.test(r.out), true)
+    await run(['conversation:compact', 'any', 'alice'])
+    eq('conversation:compact: the face is sent', last('/v1/conversations/any/compact'), {model: 'alice'})
+    r = await run(['conversation:close', 'fs_1', '--yes', '--json'])
+    eq('conversation:close: the server\'s answer', JSON.parse(r.out).deleted, true)
+
+    await run(['causes', 'alice', '-m', 'Now?', '--conversation', 'fs_1', '--premise', 'a=1', '--premise-description', 'a=x'])
+    eq('causes: conversation and premises sent, causes_visible left out', last('/v1/causes'),
+      {model: 'alice', messages: [{role: 'user', content: 'Now?'}], conversation: 'fs_1', premises: [{key: 'a', value: 1, description: 'x'}]})
+    await run(['causes', 'alice', '-m', 'Now?', '--session', 'fs_1', '--no-causes-visible'])
+    eq('causes: --session still sent as session', last('/v1/causes'), {model: 'alice', messages: [{role: 'user', content: 'Now?'}], session: 'fs_1', causes_visible: false})
+    seen.length = 0
+    r = await run(['causes', 'alice', '-m', 'Now?', '--premise', 'a=1'])
+    eq('causes: premises without a conversation are refused before sending', [r.code, /belong to a conversation/.test(r.out), seen.length], [2, true, 0])
+
+    await run(['chat:chat', 'alice@gpt-x', '-m', 'one', '--json'])
+    let t = await run(['chat:thread', 'alice@gpt-x', '-m', 'first', '--json'])
+    const tid = JSON.parse(t.out).thread_id
+    await run(['chat:thread', '--id', tid, '-m', 'second', '--json'])
+    eq('thread: without a conversation, the whole thread is sent', last('/v1/chat/completions').messages.map((m) => m.content), ['first', 'ok', 'second'])
+    await run(['chat:thread', '--id', tid, '-m', 'third', '--conversation', 'fs_1', '--premise', 'a=2', '--json'])
+    const sent = last('/v1/chat/completions')
+    eq('thread: in a conversation, only the new message', [sent.messages.map((m) => m.content), sent.conversation, sent.premises], [['third'], 'fs_1', [{key: 'a', value: 2}]])
+    await run(['chat:chat', 'alice@gpt-x', '-m', 'one', '--conversation', 'fs_1', '--no-causes-visible', '--json'])
+    eq('chat:chat: conversation and causes_visible sent', [last('/v1/chat/completions').conversation, last('/v1/chat/completions').causes_visible], ['fs_1', false])
+  } finally {
+    srv.close()
+    fs.rmSync(home, {recursive: true, force: true})
+  }
+}
+await conversationsOverHttp()
 
 console.log(`${ran - failed}/${ran} checks passed`)
 if (failed > 0) process.exit(1)

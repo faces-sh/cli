@@ -2,6 +2,7 @@ import {Args, Flags} from '@oclif/core'
 import {BaseCommand} from '../../base.js'
 import {postChat, writeReply, resolveCause, causeNeedsModel, CAUSE_FLAG_DESCRIPTION, CAUSE_FILE_FLAG_DESCRIPTION, retryOnceOnWarmUp, sayWarmUp, faceRefusalHint, STREAM_FLAG_DESCRIPTION, extractReasoning, extractStreamReasoning, STYLE_FLAG_DESCRIPTION, MEDIUM_FLAG_DESCRIPTION, SESSION_FLAG_DESCRIPTION, COMPACTION_FLAG_DESCRIPTION, chatExtras, reasoningHeading, reasoningOnlyNote, REASONING_FLAG_DESCRIPTION} from '../../utils.js'
 import {FacesAPIError} from '../../client.js'
+import {conversationFields, conversationTurnFlags} from '../../conversation.js'
 
 export default class ChatMessages extends BaseCommand {
   static description = 'Chat with a face in the Anthropic Messages format (/v1/messages). chat:chat routes Anthropic models here on its own.'
@@ -14,6 +15,7 @@ export default class ChatMessages extends BaseCommand {
     'max-tokens': Flags.integer({description: 'Max tokens (at least 1)', default: 1024, min: 1}),
     style: Flags.string({description: STYLE_FLAG_DESCRIPTION}),
     medium: Flags.string({description: MEDIUM_FLAG_DESCRIPTION}),
+    ...conversationTurnFlags(),
     session: Flags.string({description: SESSION_FLAG_DESCRIPTION}),
     compaction: Flags.string({description: COMPACTION_FLAG_DESCRIPTION}),
     'oauth-only': Flags.boolean({description: 'On a linked ChatGPT plan, run there or fail: never fall back to credits', default: false}),
@@ -37,6 +39,12 @@ export default class ChatMessages extends BaseCommand {
     const client = this.makeClient(flags)
 
     const msgs = flags.message.map((m) => ({role: 'user', content: m}))
+    let turn: Record<string, unknown>
+    try {
+      turn = conversationFields(flags)
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err))
+    }
     let cause: string | undefined
     try {
       cause = resolveCause(flags.cause, flags['cause-file'])
@@ -56,7 +64,7 @@ export default class ChatMessages extends BaseCommand {
       stream,
     }
     if (flags.system) payload.system = flags.system
-    Object.assign(payload, chatExtras(flags))
+    Object.assign(payload, chatExtras(flags), turn)
     if (flags['oauth-only']) payload.oauth_only = true
     if (cause) payload.cause = cause
 

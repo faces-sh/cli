@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import {Args, Flags} from '@oclif/core'
 import {BaseCommand} from '../base.js'
 import {FacesAPIError} from '../client.js'
+import {conversationFields, conversationTurnFlags} from '../conversation.js'
 import {QUESTION_TYPES, causeLines, heldDecisionError, readQuestionFlags, readStateFlags, type DecisionCauses} from '../decisions.js'
 import {compileHint, isMeAlias, ME_MISSING, retryOnceOnWarmUp, sayWarmUp, SESSION_FLAG_DESCRIPTION, COMPACTION_FLAG_DESCRIPTION} from '../utils.js'
 
@@ -21,6 +22,7 @@ export default class Causes extends BaseCommand {
     '<%= config.bin %> <%= command.id %> alice --state-file situation.txt --question "Does the speaker take the money?"',
     '<%= config.bin %> <%= command.id %> "(alice | bob)" -m "What matters most here?" --json',
     '<%= config.bin %> <%= command.id %> alice -m "So what do I tell them tomorrow?" --compaction fcmp_COMPACTION_ID',
+    '<%= config.bin %> <%= command.id %> alice -m "And now?" --conversation fs_CONVERSATION_ID --premise vendor_certified=false',
   ]
 
   static flags = {
@@ -54,6 +56,7 @@ export default class Causes extends BaseCommand {
       description: `A JSON file of 1 to ${MAX_CAUSE_QUESTIONS} questions in System One's format, as for faces decide. Needs --state or --state-file.`,
       exclusive: ['question'],
     }),
+    ...conversationTurnFlags(),
     session: Flags.string({description: SESSION_FLAG_DESCRIPTION}),
     compaction: Flags.string({description: COMPACTION_FLAG_DESCRIPTION}),
   }
@@ -76,6 +79,12 @@ export default class Causes extends BaseCommand {
     }
 
     const fail = (m: string): never => this.error(m)
+    let turn: Record<string, unknown> = {}
+    try {
+      turn = conversationFields(flags)
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err))
+    }
     const body: Record<string, unknown> = {model: face}
     const situation = flags.state !== undefined || flags['state-file'] !== undefined
     const questions = readQuestionFlags(flags, fail)
@@ -103,6 +112,7 @@ export default class Causes extends BaseCommand {
 
     if (flags.session) body.session = flags.session
     if (flags.compaction) body.compaction = flags.compaction
+    Object.assign(body, turn)
 
     let data: DecisionCauses & Record<string, unknown>
     try {

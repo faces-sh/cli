@@ -2,6 +2,7 @@ import {Args, Flags} from '@oclif/core'
 import {BaseCommand} from '../../base.js'
 import {postChat, writeReply, resolveCause, causeNeedsModel, CAUSE_FLAG_DESCRIPTION, CAUSE_FILE_FLAG_DESCRIPTION, retryOnceOnWarmUp, sayWarmUp, faceRefusalHint, STREAM_FLAG_DESCRIPTION, extractReasoning, extractStreamReasoning, STYLE_FLAG_DESCRIPTION, MEDIUM_FLAG_DESCRIPTION, SESSION_FLAG_DESCRIPTION, COMPACTION_FLAG_DESCRIPTION, chatExtras, reasoningHeading, reasoningOnlyNote, REASONING_FLAG_DESCRIPTION, MIN_MAX_OUTPUT_TOKENS, parseTemperature, warnDroppedParams, CHAT_PARAM_FLAGS} from '../../utils.js'
 import {FacesAPIError} from '../../client.js'
+import {conversationFields, conversationTurnFlags} from '../../conversation.js'
 
 export default class ChatResponses extends BaseCommand {
   static description = 'Chat with a face in the OpenAI Responses format (/v1/responses). The same as chat:chat --responses. On Connect and Pro with ChatGPT linked, Codex-eligible models (see faces models:list --chatgpt) run on the ChatGPT plan.'
@@ -15,6 +16,7 @@ export default class ChatResponses extends BaseCommand {
     stream: Flags.boolean({description: STREAM_FLAG_DESCRIPTION, default: true, allowNo: true}),
     style: Flags.string({description: STYLE_FLAG_DESCRIPTION}),
     medium: Flags.string({description: MEDIUM_FLAG_DESCRIPTION}),
+    ...conversationTurnFlags(),
     session: Flags.string({description: SESSION_FLAG_DESCRIPTION}),
     compaction: Flags.string({description: COMPACTION_FLAG_DESCRIPTION}),
     'oauth-only': Flags.boolean({description: 'On a linked ChatGPT plan, run there or fail: never fall back to credits', default: false}),
@@ -37,6 +39,12 @@ export default class ChatResponses extends BaseCommand {
     const {args, flags} = await this.parse(ChatResponses)
     const client = this.makeClient(flags)
 
+    let turn: Record<string, unknown>
+    try {
+      turn = conversationFields(flags)
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err))
+    }
     let cause: string | undefined
     try {
       cause = resolveCause(flags.cause, flags['cause-file'])
@@ -63,7 +71,7 @@ export default class ChatResponses extends BaseCommand {
       payload.max_output_tokens = flags['max-tokens']
     }
     if (flags.temperature !== undefined) payload.temperature = parseTemperature(flags.temperature, (m) => this.error(m))
-    Object.assign(payload, chatExtras(flags))
+    Object.assign(payload, chatExtras(flags), turn)
     if (flags['oauth-only']) payload.oauth_only = true
     if (cause) payload.cause = cause
 

@@ -1,6 +1,7 @@
 import {Args, Flags} from '@oclif/core'
 import {BaseCommand} from '../base.js'
 import {FacesAPIError, missingFieldsNote} from '../client.js'
+import {conversationFields, conversationTurnFlags} from '../conversation.js'
 import {
   DECISION_MODELS,
   decisionModels,
@@ -123,6 +124,7 @@ export default class Decide extends BaseCommand {
         'the answers. It is always in --json, as cause and causes.',
       default: false,
     }),
+    ...conversationTurnFlags({exclusive: ['baseline']}),
     session: Flags.string({description: SESSION_FLAG_DESCRIPTION, exclusive: ['baseline']}),
     compaction: Flags.string({description: COMPACTION_FLAG_DESCRIPTION, exclusive: ['baseline']}),
     format: Flags.string({
@@ -152,6 +154,13 @@ export default class Decide extends BaseCommand {
 
     if (flags.baseline && args.face) this.error('--baseline asks with no face, so leave the face out.')
     if (!flags.baseline && !args.face) this.error('Name a face to ask, or pass --baseline to ask with none.')
+
+    let turn: Record<string, unknown> = {}
+    try {
+      turn = conversationFields(flags)
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err))
+    }
 
     const state = this.readState(flags)
     const questions = this.readQuestions(flags)
@@ -190,6 +199,7 @@ export default class Decide extends BaseCommand {
     }
     if (flags.session) body.session = flags.session
     if (flags.compaction) body.compaction = flags.compaction
+    Object.assign(body, turn)
 
     if (!json) {
       process.stderr.write(

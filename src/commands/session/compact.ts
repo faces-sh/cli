@@ -11,7 +11,7 @@ export default class SessionCompact extends BaseCommand {
     'stored under a compaction id. Pass that id with --compaction on a later request with the same face, ' +
     'and send only the messages you still want read. Billed at the cause rate on the tokens it reads and ' +
     'writes; on Connect and Pro it counts against the cause allowance. A failed compaction is not charged. ' +
-    'A compaction expires 30 days after it is written.'
+    'A compaction expires 30 days after it is written. Sessions are now called conversations: see faces conversation:compact.'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> fs_SESSION_ID',

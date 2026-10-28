@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {BaseCommand} from '../../base.js'
+import {conversationFields, conversationTurnFlags} from '../../conversation.js'
 import {FacesAPIError, FacesClient} from '../../client.js'
 import {postChat, streamChat, resolveCause, CAUSE_FLAG_DESCRIPTION, CAUSE_FILE_FLAG_DESCRIPTION, retryOnceOnWarmUp, sayWarmUp, faceRefusalHint, STREAM_FLAG_DESCRIPTION, extractCause, extractStreamDelta, FACES_REASONING_ITEM_PREFIX, FACES_THINKING_SIGNATURE, extractStreamReasoning, isMaxTokensRenameError, MIN_MAX_OUTPUT_TOKENS, STYLE_FLAG_DESCRIPTION, MEDIUM_FLAG_DESCRIPTION, SESSION_FLAG_DESCRIPTION, COMPACTION_FLAG_DESCRIPTION, chatExtras, reasoningHeading, REASONING_FLAG_DESCRIPTION, parseTemperature} from '../../utils.js'
 import {resolveEndpoint, isCompositeFormula, llmFromArg, MESSAGES_ENDPOINT, RESPONSES_ENDPOINT, CHAT_COMPLETIONS_ENDPOINT} from '../../routing.js'
@@ -177,6 +178,7 @@ export default class ChatThread extends BaseCommand {
     stream: Flags.boolean({description: STREAM_FLAG_DESCRIPTION, default: true, allowNo: true}),
     style: Flags.string({description: `${STYLE_FLAG_DESCRIPTION} For this turn only.`}),
     medium: Flags.string({description: `${MEDIUM_FLAG_DESCRIPTION} For this turn only.`}),
+    ...conversationTurnFlags({suffix: 'For this turn only. Only the new message is sent: the conversation holds the rest.'}),
     session: Flags.string({description: `${SESSION_FLAG_DESCRIPTION} For this turn only.`}),
     compaction: Flags.string({description: `${COMPACTION_FLAG_DESCRIPTION} For this turn only.`}),
     'oauth-only': Flags.boolean({description: 'On a linked ChatGPT plan, run there or fail: never fall back to credits', default: false}),
@@ -281,6 +283,10 @@ export default class ChatThread extends BaseCommand {
       medium?: string
       session?: string
       compaction?: string
+      conversation?: string
+      premise?: string[]
+      'premise-description'?: string[]
+      'causes-visible'?: boolean
       cause?: string
       'cause-file'?: string
       'base-url'?: string
@@ -297,6 +303,16 @@ export default class ChatThread extends BaseCommand {
     } else {
       this.error('Provide --message/-m or --file')
     }
+
+    try {
+      this.conversationBody = conversationFields(flags)
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err))
+    }
+    // In a conversation the server holds the history and reads it before the
+    // new message, and keeps every user message it is sent: replaying the
+    // thread would add its earlier messages to the conversation again.
+    this.newOnly = Boolean(flags.conversation || flags.session)
 
     const client = this.makeClient(flags)
 
@@ -419,6 +435,17 @@ export default class ChatThread extends BaseCommand {
     }
   }
 
+  /** --conversation, --premise and --causes-visible, as request fields. */
+  private conversationBody: Record<string, unknown> = {}
+
+  /** Whether only the new message goes out, because a conversation holds the rest. */
+  private newOnly = false
+
+  /** The thread's messages to send this turn. */
+  private sent(thread: Thread): ThreadMessage[] {
+    return this.newOnly ? thread.messages.slice(-1) : thread.messages
+  }
+
   private async sendChatCompletions(
     client: FacesClient,
     thread: Thread,
@@ -426,12 +453,12 @@ export default class ChatThread extends BaseCommand {
   ): Promise<Reply> {
     const messages: Array<Record<string, unknown>> = []
     if (thread.system) messages.push({role: 'system', content: thread.system})
-    for (const m of thread.messages) messages.push(chatTurn(m))
+    for (const m of this.sent(thread)) messages.push(chatTurn(m))
 
     const payload: Record<string, unknown> = {model: thread.model, messages, stream: flags.stream}
     if (flags['max-tokens']) payload.max_tokens = flags['max-tokens']
     if (flags.temperature !== undefined) payload.temperature = parseTemperature(flags.temperature, (m) => this.error(m))
-    Object.assign(payload, chatExtras(flags))
+    Object.assign(payload, chatExtras(flags), this.conversationBody)
     if (flags['oauth-only']) payload.oauth_only = true
     if (flags.cause) payload.cause = flags.cause
 
@@ -463,7 +490,7 @@ export default class ChatThread extends BaseCommand {
   ): Promise<Reply> {
     // The Responses API is stateless here: replay the full history as the input
     // array each turn, with the system prompt carried in `instructions`.
-    const input = thread.messages.flatMap((m) => responsesTurns(m))
+    const input = this.sent(thread).flatMap((m) => responsesTurns(m))
     const payload: Record<string, unknown> = {model: thread.model, input, stream: flags.stream}
     if (thread.system) payload.instructions = thread.system
     // 0 is falsy, so it skipped the check and went out as no cap at all.
@@ -479,7 +506,7 @@ export default class ChatThread extends BaseCommand {
     // Responses takes it too; a model that does not is answered without it,
     // and the server says so in x-faces-dropped-params.
     if (flags.temperature !== undefined) payload.temperature = parseTemperature(flags.temperature, (m) => this.error(m))
-    Object.assign(payload, chatExtras(flags))
+    Object.assign(payload, chatExtras(flags), this.conversationBody)
     if (flags['oauth-only']) payload.oauth_only = true
     if (flags.cause) payload.cause = flags.cause
 
@@ -496,7 +523,7 @@ export default class ChatThread extends BaseCommand {
     thread: Thread,
     flags: {stream: boolean; 'max-tokens'?: number; style?: string; medium?: string; session?: string; compaction?: string; 'oauth-only': boolean; 'show-cause': boolean; cause?: string},
   ): Promise<Reply> {
-    const msgs = thread.messages.map((m) => messagesTurn(m))
+    const msgs = this.sent(thread).map((m) => messagesTurn(m))
     const payload: Record<string, unknown> = {
       model: thread.model,
       messages: msgs,
@@ -504,7 +531,7 @@ export default class ChatThread extends BaseCommand {
       stream: flags.stream,
     }
     if (thread.system) payload.system = thread.system
-    Object.assign(payload, chatExtras(flags))
+    Object.assign(payload, chatExtras(flags), this.conversationBody)
     if (flags['oauth-only']) payload.oauth_only = true
     if (flags.cause) payload.cause = flags.cause
 

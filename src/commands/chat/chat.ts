@@ -4,6 +4,7 @@ import {BaseCommand} from '../../base.js'
 import {chatgptLinked} from '../../style.js'
 import {FacesAPIError} from '../../client.js'
 import {postChat, writeReply, streamChat, resolveCause, CAUSE_FLAG_DESCRIPTION, CAUSE_FILE_FLAG_DESCRIPTION, retryOnceOnWarmUp, sayWarmUp, faceRefusalHint, STREAM_FLAG_DESCRIPTION, extractReasoning, extractStreamDelta, extractStreamReasoning, reasoningHeading, reasoningOnlyNote, REASONING_FLAG_DESCRIPTION, isMaxTokensRenameError, MIN_MAX_OUTPUT_TOKENS, STYLE_FLAG_DESCRIPTION, MEDIUM_FLAG_DESCRIPTION, SESSION_FLAG_DESCRIPTION, COMPACTION_FLAG_DESCRIPTION, chatExtras, warnDroppedParams, CHAT_PARAM_FLAGS, parseTemperature} from '../../utils.js'
+import {conversationFields, conversationTurnFlags} from '../../conversation.js'
 import {resolveEndpoint, RouteInfo, MESSAGES_ENDPOINT, RESPONSES_ENDPOINT, isCompositeFormula, faceSpecOf, llmFromArg} from '../../routing.js'
 
 export default class ChatChat extends BaseCommand {
@@ -11,8 +12,8 @@ export default class ChatChat extends BaseCommand {
     'Chat with a face on any supported model. The face\'s cause steers the model\'s answer. Routes to the ' +
     'right endpoint from the model catalog. A face named without a model answers on its default model. ' +
     '--show-cause also prints the cause, and --cause-only asks for the cause alone, with no answer. ' +
-    'Add --style <medium> to apply a style the face has built, and --session or --compaction to use a ' +
-    'session (see faces session:create).'
+    'Add --style <medium> to apply a style the face has built, --conversation to take the turn in a ' +
+    'conversation (see faces conversation:create), and --compaction to read a compaction.'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> socrates -m "What is virtue?"',
@@ -20,7 +21,9 @@ export default class ChatChat extends BaseCommand {
     '<%= config.bin %> <%= command.id %> socrates -m "Should I sign a grant I have not read?" --show-cause',
     '<%= config.bin %> <%= command.id %> socrates -m "Should I sign a grant I have not read?" --cause-only',
     '<%= config.bin %> <%= command.id %> socrates -m "Can you just sign it?" --cause "I will not sign what I have not read."',
-    '<%= config.bin %> <%= command.id %> alice -m "So what do I tell them tomorrow?" --session fs_SESSION_ID',
+    '<%= config.bin %> <%= command.id %> alice -m "So what do I tell them tomorrow?" --conversation fs_CONVERSATION_ID',
+    '<%= config.bin %> <%= command.id %> alice -m "Is this vendor worth a closer look?" --conversation fs_CONVERSATION_ID ' +
+      '--premise budget_usd=50000 --premise-description budget_usd="the most we can spend this year"',
     '<%= config.bin %> <%= command.id %> "(socrates | nietzsche)@claude-sonnet-4-6" -m "What is virtue?"',
     '<%= config.bin %> <%= command.id %> --formula "socrates | nietzsche" --llm claude-sonnet-4-6 -m "What is virtue?"',
   ]
@@ -38,6 +41,7 @@ export default class ChatChat extends BaseCommand {
     responses: Flags.boolean({description: 'Force the OpenAI Responses API endpoint (escape hatch; routing is automatic otherwise)', default: false}),
     style: Flags.string({description: STYLE_FLAG_DESCRIPTION}),
     medium: Flags.string({description: MEDIUM_FLAG_DESCRIPTION}),
+    ...conversationTurnFlags(),
     session: Flags.string({description: SESSION_FLAG_DESCRIPTION}),
     compaction: Flags.string({description: COMPACTION_FLAG_DESCRIPTION}),
     'oauth-only': Flags.boolean({description: 'On a linked ChatGPT plan, run there or fail: never fall back to credits', default: false}),
@@ -109,6 +113,15 @@ export default class ChatChat extends BaseCommand {
     if (flags['cause-only'] && llmFromArg(model)) {
       this.error(`--cause-only asks the face alone, so leave the model off: ${faceSpecOf(model)}`)
     }
+
+    // Checked before routing, which asks the server.
+    let turn: Record<string, unknown>
+    try {
+      turn = conversationFields(flags)
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err))
+    }
+    this.conversationBody = turn
 
     // Route off the model catalog; --responses forces the Responses endpoint.
     const route = await resolveEndpoint(client, model)
@@ -268,6 +281,9 @@ export default class ChatChat extends BaseCommand {
 
   private reasoningOnly = false
 
+  /** --conversation, --premise and --causes-visible, as request fields. */
+  private conversationBody: Record<string, unknown> = {}
+
   private async runChatCompletions(
     client: ReturnType<typeof this.makeClient>,
     model: string,
@@ -281,7 +297,7 @@ export default class ChatChat extends BaseCommand {
     const payload: Record<string, unknown> = {model, messages, stream: flags.stream}
     if (flags['max-tokens']) payload.max_tokens = flags['max-tokens']
     if (flags.temperature !== undefined) payload.temperature = parseTemperature(flags.temperature, (m) => this.error(m))
-    Object.assign(payload, chatExtras(flags))
+    Object.assign(payload, chatExtras(flags), this.conversationBody)
     if (flags['oauth-only']) payload.oauth_only = true
     if (flags.cause) payload.cause = flags.cause
 
@@ -330,7 +346,7 @@ export default class ChatChat extends BaseCommand {
       stream: flags.stream,
     }
     if (flags.system) payload.system = flags.system
-    Object.assign(payload, chatExtras(flags))
+    Object.assign(payload, chatExtras(flags), this.conversationBody)
     if (flags['oauth-only']) payload.oauth_only = true
     if (flags.cause) payload.cause = flags.cause
 
@@ -382,7 +398,7 @@ export default class ChatChat extends BaseCommand {
       payload.max_output_tokens = flags['max-tokens']
     }
     if (flags.temperature !== undefined) payload.temperature = parseTemperature(flags.temperature, (m) => this.error(m))
-    Object.assign(payload, chatExtras(flags))
+    Object.assign(payload, chatExtras(flags), this.conversationBody)
     if (flags['oauth-only']) payload.oauth_only = true
     if (flags.cause) payload.cause = flags.cause
 

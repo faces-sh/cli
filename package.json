@@ -108,6 +108,9 @@
       "benchmark": {
         "description": "Compare a face against a reference model on its own material"
       },
+      "conversation": {
+        "description": "Conversations: keep a whole exchange with faces on the server, with premises"
+      },
       "session": {
         "description": "Sessions: group turns with a face, then compact them"
       },

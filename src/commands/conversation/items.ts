@@ -26,9 +26,21 @@ export default class ConversationItems extends BaseCommand {
     const {args, flags} = await this.parse(ConversationItems)
     const client = this.makeClient(flags)
 
-    let data: {data?: Array<Record<string, unknown>>; premises?: Record<string, PremiseState>}
+    type Page = {data?: Array<Record<string, unknown>>; premises?: Record<string, PremiseState>; has_more?: boolean; last_id?: string}
+    const all: Array<Record<string, unknown>> = []
+    let premises: Record<string, PremiseState> | undefined
     try {
-      data = (await client.get(`${CONVERSATIONS_PATH}/${seg(args.conversation_id)}/items`)) as typeof data
+      // oldest first, a page at a time, until the last page
+      let after = ''
+      for (;;) {
+        const page = (await client.get(
+          `${CONVERSATIONS_PATH}/${seg(args.conversation_id)}/items?order=asc&limit=100${after ? `&after=${encodeURIComponent(after)}` : ''}`,
+        )) as Page
+        all.push(...(page.data ?? []))
+        premises = page.premises ?? premises
+        if (!page.has_more || !page.last_id) break
+        after = page.last_id
+      }
     } catch (err) {
       if (err instanceof FacesAPIError) {
         const hint = conversationHint(err)
@@ -37,8 +49,10 @@ export default class ConversationItems extends BaseCommand {
       throw err
     }
 
+    const data = {object: 'list', data: all, first_id: all[0]?.id ?? null, last_id: all.at(-1)?.id ?? null,
+      has_more: false, premises}
     if (!this.jsonEnabled()) {
-      const items = data.data ?? []
+      const items = data.data
       if (items.length === 0) this.log('No items yet.')
       for (const line of itemLines(items)) this.log(line)
       this.log('')

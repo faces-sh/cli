@@ -231,7 +231,7 @@ function parsed(raw: unknown): Record<string, unknown> {
 }
 
 function questionText(q: Record<string, unknown>): string {
-  return String(q.instructions ?? q.question ?? q.id ?? '?')
+  return String(q.instructions ?? q.question ?? q.name ?? q.id ?? '?')
 }
 
 function choiceOf(out: Record<string, unknown>): string {
@@ -246,8 +246,9 @@ function choiceOf(out: Record<string, unknown>): string {
 
 /**
  * A conversation's items as lines a person reads: each message, decision and
- * premise once, in order. A decision or premise is two items (the call and
- * its output), printed together at the output, under the output's id.
+ * premise once, in order. A decision is one item; a premise, or a decision
+ * stored before decisions became one item, is two (the call and its output),
+ * printed together at the output, under the output's id.
  */
 export function itemLines(items: Array<Record<string, unknown>>): string[] {
   const calls = new Map<string, Record<string, unknown>>()
@@ -258,6 +259,14 @@ export function itemLines(items: Array<Record<string, unknown>>): string[] {
     const pad = ' '.repeat(head.length)
     if (it.type === 'function_call') {
       calls.set(String(it.call_id ?? ''), it)
+      continue
+    }
+    if (it.type === 'decision') {
+      const answer = (it.answer && typeof it.answer === 'object' ? it.answer : {}) as Record<string, unknown>
+      const question = (it.question && typeof it.question === 'object' ? it.question : {}) as Record<string, unknown>
+      const result = answer.result === undefined || answer.result === null ? '-' : String(answer.result)
+      lines.push(`${head}${String(it.face ?? 'face')}${it.model ? ` (${it.model})` : ''} decided: ${questionText(question)} -> ${result}`)
+      if (typeof it.cause === 'string' && it.cause) lines.push(`${pad}cause: ${it.cause}`)
       continue
     }
     if (it.type === 'function_call_output') {

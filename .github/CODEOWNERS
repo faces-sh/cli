@@ -1,5 +1,5 @@
 # Changes to what protects this repo need both partners: the workflows, and what
-# the test check runs.
+# the test check runs. package.json is not here, so a release or a new dependency
+# needs no review first; each release's review issue lists any change to it.
 /.github/ @maestrouniverso
-/package.json @maestrouniverso
 /scripts/ @maestrouniverso

@@ -30,15 +30,26 @@ export default class ConversationItems extends BaseCommand {
     const all: Array<Record<string, unknown>> = []
     let premises: Record<string, PremiseState> | undefined
     try {
-      // oldest first, a page at a time, until the last page
+      // oldest first, a page at a time, until the last page. A server that says
+      // has_more but gives an empty page, or a last_id it has given before, would
+      // send us round forever: stop there and say so.
       let after = ''
+      const seenIds = new Set<string>()
       for (;;) {
         const page = (await client.get(
           `${CONVERSATIONS_PATH}/${seg(args.conversation_id)}/items?order=asc&limit=100${after ? `&after=${encodeURIComponent(after)}` : ''}`,
         )) as Page
-        all.push(...(page.data ?? []))
+        const rows = page.data ?? []
+        all.push(...rows)
         premises = page.premises ?? premises
         if (!page.has_more || !page.last_id) break
+        if (rows.length === 0 || seenIds.has(page.last_id)) {
+          // straight to stderr, so it shows with --json too and stays out of the JSON
+          process.stderr.write(`Warning: stopped paging: the server said there were more items but ${rows.length === 0
+            ? 'sent an empty page' : `repeated the position ${page.last_id}`}. The list may be incomplete.\n`)
+          break
+        }
+        seenIds.add(page.last_id)
         after = page.last_id
       }
     } catch (err) {

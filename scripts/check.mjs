@@ -1657,6 +1657,26 @@ async function conversationsOverHttp() {
       }
       if (req.url === '/v1/systemone') return send(200, {model: '@alice:maestro-1/jev-latest', answers: {move: {probability: 0.6}}, decision_ids: {move: 'dec_9'}})
       if (req.url === '/v1/media') return send(200, {object: 'list', data: [{object: 'medium', name: 'speech', description: 'Spoken to an audience.', subcategories: ['keynote']}]})
+      if (req.method === 'GET' && req.url.startsWith('/v1/states/')) {
+        const u = new URL(req.url, 'http://x')
+        const after = u.searchParams.get('after')
+        const premises = {a: {value: 1, description: 'x'}}
+        // three pages of two: it_1..it_6
+        if (u.pathname === '/v1/states/paged/items') {
+          const start = after ? Number(after.slice(3)) : 0
+          const data = [start + 1, start + 2].map((n) => ({id: `it_${n}`, type: 'message', role: 'user', content: `m${n}`}))
+          return send(200, {object: 'list', data, last_id: data[1].id, has_more: start + 2 < 6, premises})
+        }
+        // always the same page, always "more"
+        if (u.pathname === '/v1/states/loop/items') {
+          return send(200, {object: 'list', data: [{id: 'it_1', type: 'message', role: 'user', content: 'm1'}], last_id: 'it_1', has_more: true, premises})
+        }
+        // one page, then empty pages that still say "more"
+        if (u.pathname === '/v1/states/hollow/items') {
+          if (!after) return send(200, {object: 'list', data: [{id: 'it_1', type: 'message', role: 'user', content: 'm1'}], last_id: 'it_1', has_more: true, premises})
+          return send(200, {object: 'list', data: [], last_id: `it_${Number(after.slice(3)) + 1}`, has_more: true, premises})
+        }
+      }
       if (req.url.startsWith('/v1/models')) return send(200, {data: []})
       if (req.url === '/v1/chat/completions') return send(200, {object: 'chat.completion', choices: [{message: {content: 'ok'}}]})
       send(404, {detail: 'not here'})
@@ -1670,7 +1690,34 @@ async function conversationsOverHttp() {
     child.stdin.end()
   })
   const last = (url) => seen.filter((s) => s.url === url).at(-1)?.body
+  // stdout and stderr apart, and killed after 15s so a paging loop fails the check instead of hanging it
+  const runTimed = (args) => new Promise((r) => {
+    const child = execFile(process.execPath, ['bin/run.js', ...args], {env, timeout: 15000}, (err, stdout, stderr) =>
+      r({code: err?.code ?? 0, killed: Boolean(err?.killed), out: stdout, err: stderr}))
+    child.stdin.end()
+  })
+  const parsed = (out) => { try { return JSON.parse(out) } catch { return {data: []} } }
+  const gets = (id) => seen.filter((s) => s.method === 'GET' && s.url.startsWith(`/v1/states/${id}/items`)).map((s) => new URL(s.url, 'http://x').searchParams.get('after'))
   try {
+    seen.length = 0
+    let p = await runTimed(['conversation:items', 'paged', '--json'])
+    let pj = parsed(p.out)
+    eq('conversation:items: every page fetched, in order', [p.code, pj.data.map((i) => i.id), pj.last_id, pj.has_more], [0, ['it_1', 'it_2', 'it_3', 'it_4', 'it_5', 'it_6'], 'it_6', false])
+    eq('conversation:items: each page asks after the last one', gets('paged'), [null, 'it_2', 'it_4'])
+    eq('conversation:items: normal paging warns nothing', p.err, '')
+    p = await runTimed(['conversation:items', 'paged'])
+    eq('conversation:items: all pages printed', [p.code, /m1/.test(p.out), /m6/.test(p.out)], [0, true, true])
+    seen.length = 0
+    p = await runTimed(['conversation:items', 'loop', '--json'])
+    eq('conversation:items: a repeated last_id stops, not hangs', [p.killed, p.code], [false, 0])
+    eq('conversation:items: a repeated last_id is asked for once more, then stops', gets('loop').slice(0, 3), [null, 'it_1'])
+    eq('conversation:items: a repeated last_id warns on stderr', /stopped paging.*repeated the position it_1/.test(p.err), true)
+    eq('conversation:items: the warning stays out of the JSON', parsed(p.out).data.map((i) => i.id), ['it_1', 'it_1'])
+    seen.length = 0
+    p = await runTimed(['conversation:items', 'hollow', '--json'])
+    eq('conversation:items: an empty page with has_more stops', [p.killed, p.code, gets('hollow').slice(0, 3)], [false, 0, [null, 'it_1']])
+    eq('conversation:items: an empty page warns on stderr', /stopped paging.*empty page/.test(p.err), true)
+
     let r = await run(['conversation:create'])
     eq('conversation:create: no face, causes visible, no items', last('/v1/states'), {causes_visible: true})
     eq('conversation:create: any face reads as such', /face:\s+any of your faces/.test(r.out), true)

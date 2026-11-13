@@ -58,8 +58,9 @@ faces face:tag:add / list / remove / set / all
 faces causes                      # a face's cause alone
 faces chat:chat / messages / responses / thread
 faces decide                      # what a face would decide: yes/no, a choice, or a score
-faces conversation:create / get / items / add / compact / close
-faces session:create / get / compact / close   # the old name for conversations
+faces state:create / get / items / add / compact / close
+faces conversation:create / get / items / add / compact / close   # the old name for states
+faces session:create / get / compact / close   # an older name
 
 faces compile:doc / compile:doc:create / list / get / edit / make / pause / reset / delete
 faces compile:thread:create / list / get / edit / message / replace / make / pause / reset / delete
@@ -122,41 +123,44 @@ faces chat:chat alice -m "Reply to the note below." --style email
 A build runs at no charge on Connect or Pro with a linked ChatGPT account. Anywhere else it is
 charged to credits at the build model's listed price, so `style:make` needs `--allow-paid`.
 
-## Conversations
+## States
 
-A conversation keeps the whole exchange on the server: your messages, each face's reply with its
-cause, decisions, and **premises**, named facts your decisions depend on. Send only what is new on
-each turn; the conversation so far is read before it.
+A state is something you build and Faces keeps and watches: your **premises** (named facts your
+decisions depend on), the decisions faces made, each face's reply with its cause, and your
+messages, each decision kept with the premises it was made under. Send only what is new on each
+turn; the state so far is read before it. When you change a premise, `state:add` lists the
+decisions made under its old value.
 
 ```bash
-faces conversation:create alice          # leave the face out to take any of your faces
-faces chat:chat alice -m "Is this vendor worth a closer look?" --conversation fs_CONVERSATION_ID \
+faces state:create alice          # leave the face out to take any of your faces
+faces chat:chat alice -m "Is this vendor worth a closer look?" --conversation fs_STATE_ID \
   --premise budget_usd=50000 --premise-description budget_usd="the most we can spend this year"
-faces decide alice --conversation fs_CONVERSATION_ID --state "The vendor sent a contract." \
+faces decide alice --conversation fs_STATE_ID --state "The vendor sent a contract." \
   --question "Does the speaker sign?"
-faces conversation:add fs_CONVERSATION_ID --premise vendor_certified=false \
+faces state:add fs_STATE_ID --premise vendor_certified=false \
   --premise-description vendor_certified="the vendor holds a security audit report"
-faces conversation:items fs_CONVERSATION_ID
-faces conversation:compact fs_CONVERSATION_ID
+faces state:items fs_STATE_ID
+faces state:compact fs_STATE_ID
 faces chat:chat alice -m "So what do I tell them tomorrow?" --compaction fcmp_COMPACTION_ID
 ```
 
-`--conversation`, `--premise` and `--premise-description` work on `chat:chat`, `chat:messages`,
-`chat:responses`, `chat:thread`, `decide` and `causes`.
+`--conversation` takes a state's id. With `--premise` and `--premise-description` it works on
+`chat:chat`, `chat:messages`, `chat:responses`, `chat:thread`, `decide` and `causes`. On `decide`
+and `causes`, `--state` is something else: the situation, as text.
 
 A premise is `--premise key=value`, repeatable. The key is 1 to 64 letters, digits, `_` or `-`. The
 value is read as JSON when it is JSON (`50000`, `true`, `null`, `["a","b"]`) and as text otherwise;
 quote it to keep a number as text: `--premise 'code="007"'`. The first time a key is used it needs
 a description, given by key: `--premise-description key="what it means"`. A newer value of a key
-replaces it from then on, and `conversation:add` lists every earlier decision made under the old
+replaces it from then on, and `state:add` lists every earlier decision made under the old
 value. Nothing is decided again for you.
 
-In a conversation that takes any face, each turn names its face, and `--no-causes-visible` on
-`conversation:create` (or on a turn) keeps each face from reading the others' causes. Compacting
-one names the face: `faces conversation:compact fs_CONVERSATION_ID alice`.
+In a state that takes any face, each turn names its face, and `--no-causes-visible` on
+`state:create` (or on a turn) keeps each face from reading the others' causes. Compacting
+one names the face: `faces state:compact fs_STATE_ID alice`.
 
-Conversations were called sessions. The `session:*` commands and `--session` still work and name
-the same thing.
+States were called conversations, and before that sessions. The `conversation:*` commands, the
+`session:*` commands and `--session` still work.
 
 ## Authentication
 

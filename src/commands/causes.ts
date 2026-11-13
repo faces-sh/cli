@@ -22,7 +22,7 @@ export default class Causes extends BaseCommand {
     '<%= config.bin %> <%= command.id %> alice --state-file situation.txt --question "Does the speaker take the money?"',
     '<%= config.bin %> <%= command.id %> "(alice | bob)" -m "What matters most here?" --json',
     '<%= config.bin %> <%= command.id %> alice -m "So what do I tell them tomorrow?" --compaction fcmp_COMPACTION_ID',
-    '<%= config.bin %> <%= command.id %> alice -m "And now?" --conversation fs_CONVERSATION_ID --premise vendor_certified=false',
+    '<%= config.bin %> <%= command.id %> alice -m "And now?" --conversation fs_STATE_ID --premise vendor_certified=false',
   ]
 
   static flags = {

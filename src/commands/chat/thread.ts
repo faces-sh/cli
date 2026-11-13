@@ -178,7 +178,7 @@ export default class ChatThread extends BaseCommand {
     stream: Flags.boolean({description: STREAM_FLAG_DESCRIPTION, default: true, allowNo: true}),
     style: Flags.string({description: `${STYLE_FLAG_DESCRIPTION} For this turn only.`}),
     medium: Flags.string({description: `${MEDIUM_FLAG_DESCRIPTION} For this turn only.`}),
-    ...conversationTurnFlags({suffix: 'For this turn only. Only the new message is sent: the conversation holds the rest.'}),
+    ...conversationTurnFlags({suffix: 'For this turn only. Only the new message is sent: the state holds the rest.'}),
     session: Flags.string({description: `${SESSION_FLAG_DESCRIPTION} For this turn only.`}),
     compaction: Flags.string({description: `${COMPACTION_FLAG_DESCRIPTION} For this turn only.`}),
     'oauth-only': Flags.boolean({description: 'On a linked ChatGPT plan, run there or fail: never fall back to credits', default: false}),
@@ -309,9 +309,9 @@ export default class ChatThread extends BaseCommand {
     } catch (err) {
       this.error(err instanceof Error ? err.message : String(err))
     }
-    // In a conversation the server holds the history and reads it before the
+    // In a state the server holds the history and reads it before the
     // new message, and keeps every user message it is sent: replaying the
-    // thread would add its earlier messages to the conversation again.
+    // thread would add its earlier messages to the state again.
     this.newOnly = Boolean(flags.conversation || flags.session)
 
     const client = this.makeClient(flags)
@@ -438,7 +438,7 @@ export default class ChatThread extends BaseCommand {
   /** --conversation, --premise and --causes-visible, as request fields. */
   private conversationBody: Record<string, unknown> = {}
 
-  /** Whether only the new message goes out, because a conversation holds the rest. */
+  /** Whether only the new message goes out, because a state holds the rest. */
   private newOnly = false
 
   /** The thread's messages to send this turn. */

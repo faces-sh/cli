@@ -1,17 +1,19 @@
 import {Args} from '@oclif/core'
 import {BaseCommand} from '../../base.js'
 import {FacesAPIError} from '../../client.js'
-import {CONVERSATIONS_PATH, PremiseState, conversationHint, itemLines, premiseLines} from '../../conversation.js'
+import {STATES_PATH, PremiseState, conversationHint, itemLines, premiseLines} from '../../conversation.js'
 import {seg} from '../../utils.js'
 
-export default class ConversationItems extends BaseCommand {
+export default class StateItems extends BaseCommand {
   static description =
-    'List a conversation\'s items in order: your messages, each face\'s reply with its cause, decisions ' +
+    'List a state\'s items in order: your messages, each face\'s reply with its cause, decisions ' +
     'with their choice and cause, and premises. Ends with the premises in force now. Free.'
 
+  static aliases = ['conversation:items']
+
   static examples = [
-    '<%= config.bin %> <%= command.id %> fs_CONVERSATION_ID',
-    '<%= config.bin %> <%= command.id %> fs_CONVERSATION_ID --json',
+    '<%= config.bin %> <%= command.id %> fs_STATE_ID',
+    '<%= config.bin %> <%= command.id %> fs_STATE_ID --json',
   ]
 
   static flags = {
@@ -19,11 +21,11 @@ export default class ConversationItems extends BaseCommand {
   }
 
   static args = {
-    conversation_id: Args.string({description: 'Conversation id (from conversation:create)', required: true}),
+    conversation_id: Args.string({description: 'State id (from state:create)', required: true}),
   }
 
   async run(): Promise<unknown> {
-    const {args, flags} = await this.parse(ConversationItems)
+    const {args, flags} = await this.parse(StateItems)
     const client = this.makeClient(flags)
 
     type Page = {data?: Array<Record<string, unknown>>; premises?: Record<string, PremiseState>; has_more?: boolean; last_id?: string}
@@ -34,7 +36,7 @@ export default class ConversationItems extends BaseCommand {
       let after = ''
       for (;;) {
         const page = (await client.get(
-          `${CONVERSATIONS_PATH}/${seg(args.conversation_id)}/items?order=asc&limit=100${after ? `&after=${encodeURIComponent(after)}` : ''}`,
+          `${STATES_PATH}/${seg(args.conversation_id)}/items?order=asc&limit=100${after ? `&after=${encodeURIComponent(after)}` : ''}`,
         )) as Page
         all.push(...(page.data ?? []))
         premises = page.premises ?? premises

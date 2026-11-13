@@ -1561,13 +1561,13 @@ eq('turn fields: --session counts as the conversation', conversationFields({sess
 eq('turn fields: the same id under both names is fine', conversationFields({conversation: 'fs_1', session: 'fs_1'}), {conversation: 'fs_1'})
 const turnError = (f) => { try { conversationFields(f); return undefined } catch (e) { return e.message } }
 eq('turn fields: two different ids are refused', /not two different ids/.test(turnError({conversation: 'fs_1', session: 'fs_2'})), true)
-eq('turn fields: premises with no conversation are refused', /belong to a conversation/.test(turnError({premise: ['a=1']})), true)
-eq('turn fields: causes_visible with no conversation is refused', /belong to a conversation/.test(turnError({'causes-visible': true})), true)
+eq('turn fields: premises with no conversation are refused', /belong to a state/.test(turnError({premise: ['a=1']})), true)
+eq('turn fields: causes_visible with no conversation is refused', /belong to a state/.test(turnError({'causes-visible': true})), true)
 eq('client items: premises first, then messages', clientItems(['hi'], [{key: 'a', value: 1}]), [{key: 'a', value: 1}, {type: 'message', role: 'user', content: 'hi'}])
 
-eq('conversation lines: any face, causes hidden', conversationLines({object: 'conversation', id: 'fs_1', model: null, turns: 0, items: 2, causes_visible: false, status: 'open'}), [
-  'conversation: fs_1', 'face:         any of your faces', 'status:       open', 'turns:        0', 'items:        2', 'causes:       each face reads its own only'])
-eq('conversation lines: one face', conversationLines({object: 'conversation', id: 'fs_1', model: 'alice', causes_visible: true})[1], 'face:         alice')
+eq('state lines: any face, causes hidden', conversationLines({object: 'state', id: 'fs_1', model: null, turns: 0, items: 2, causes_visible: false, status: 'open'}), [
+  'state:        fs_1', 'face:         any of your faces', 'status:       open', 'turns:        0', 'items:        2', 'causes:       each face reads its own only'])
+eq('state lines: one face', conversationLines({object: 'state', id: 'fs_1', model: 'alice', causes_visible: true})[1], 'face:         alice')
 
 const loggedItems = [
   {id: 'ci_1', type: 'function_call', name: 'premise', call_id: 'prem_1', arguments: '{"key": "budget_usd"}'},
@@ -1615,18 +1615,18 @@ async function conversationsOverHttp() {
       const send = (status, body) => { res.writeHead(status, {'content-type': 'application/json'}); res.end(JSON.stringify(body)) }
       const body = b ? JSON.parse(b) : undefined
       seen.push({method: req.method, url: req.url, body})
-      const conv = {object: 'conversation', id: 'fs_1', model: body?.model ?? null, turns: 0, items: body?.items?.length ?? 0, causes_visible: body?.causes_visible ?? true, status: 'open'}
-      if (req.url === '/v1/conversations' && req.method === 'POST') return send(200, conv)
-      if (req.url === '/v1/conversations/gone') return send(404, {detail: 'no such conversation, or it has expired'})
-      if (req.url === '/v1/conversations/any/compact') {
+      const conv = {object: 'state', id: 'fs_1', model: body?.model ?? null, turns: 0, items: body?.items?.length ?? 0, causes_visible: body?.causes_visible ?? true, status: 'open'}
+      if (req.url === '/v1/states' && req.method === 'POST') return send(200, conv)
+      if (req.url === '/v1/states/gone') return send(404, {detail: 'no such state, or it has expired'})
+      if (req.url === '/v1/states/any/compact') {
         if (!body?.model) return send(422, {detail: 'this conversation takes any face: name the one to compact in `model`'})
         return send(200, {object: 'cause.compaction', compaction_id: 'fcmp_1', cause: 'Position.', turns: 2})
       }
-      if (req.url === '/v1/conversations/fs_1/items' && req.method === 'POST') {
+      if (req.url === '/v1/states/fs_1/items' && req.method === 'POST') {
         return send(200, {object: 'list', data: [], premises: {vendor_certified: {value: false, description: 'certified'}},
           decisions_made_under_old_values: [{call_id: 'dec_1', question: {instructions: 'Sign?'}, choice: 'no', face: 'alice', changed: {vendor_certified: {was: true, now: false}}}]})
       }
-      if (req.url === '/v1/conversations/fs_1' && req.method === 'DELETE') return send(200, {id: 'fs_1', object: 'conversation.deleted', deleted: true})
+      if (req.url === '/v1/states/fs_1' && req.method === 'DELETE') return send(200, {id: 'fs_1', object: 'state.deleted', deleted: true})
       if (req.url === '/v1/causes') return send(200, {cause: 'Because.'})
       if (req.url.startsWith('/v1/models')) return send(200, {data: []})
       if (req.url === '/v1/chat/completions') return send(200, {object: 'chat.completion', choices: [{message: {content: 'ok'}}]})
@@ -1642,32 +1642,35 @@ async function conversationsOverHttp() {
   })
   const last = (url) => seen.filter((s) => s.url === url).at(-1)?.body
   try {
-    let r = await run(['conversation:create'])
-    eq('conversation:create: no face, causes visible, no items', last('/v1/conversations'), {causes_visible: true})
-    eq('conversation:create: any face reads as such', /face:\s+any of your faces/.test(r.out), true)
-    await run(['conversation:create', 'alice', '--no-causes-visible', '-m', 'hi', '--premise', 'a=1', '--premise-description', 'a=the budget'])
-    eq('conversation:create: face, causes hidden, premises then messages', last('/v1/conversations'),
+    let r = await run(['state:create'])
+    eq('state:create: no face, causes visible, no items', last('/v1/states'), {causes_visible: true})
+    eq('state:create: any face reads as such', /face:\s+any of your faces/.test(r.out), true)
+    await run(['state:create', 'alice', '--no-causes-visible', '-m', 'hi', '--premise', 'a=1', '--premise-description', 'a=the budget'])
+    eq('state:create: face, causes hidden, premises then messages', last('/v1/states'),
       {causes_visible: false, model: 'alice', items: [{key: 'a', value: 1, description: 'the budget'}, {type: 'message', role: 'user', content: 'hi'}]})
     seen.length = 0
-    r = await run(['conversation:create', 'alice@gpt-x'])
-    eq('conversation:create: a model is refused before sending', [r.code, /face alone: alice/.test(r.out), seen.length], [2, true, 0])
-    r = await run(['conversation:add', 'fs_1', '--premise', 'vendor_certified=false'])
-    eq('conversation:add: sent as items', last('/v1/conversations/fs_1/items'), {items: [{key: 'vendor_certified', value: false}]})
-    eq('conversation:add: decisions under old values, readably',
+    r = await run(['state:create', 'alice@gpt-x'])
+    eq('state:create: a model is refused before sending', [r.code, /face alone: alice/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['state:add', 'fs_1', '--premise', 'vendor_certified=false'])
+    eq('state:add: sent as items', last('/v1/states/fs_1/items'), {items: [{key: 'vendor_certified', value: false}]})
+    eq('state:add: decisions under old values, readably',
       [/1 earlier decision was made under a value you just changed/.test(r.out), /alice: Sign\? -> no/.test(r.out), /vendor_certified: was true, now false/.test(r.out)], [true, true, true])
     seen.length = 0
-    r = await run(['conversation:add', 'fs_1'])
-    eq('conversation:add: nothing to add is refused before sending', [r.code, seen.length], [2, 0])
-    r = await run(['conversation:add', 'fs_1', ...Array.from({length: 21}, (_, i) => ['-m', `m${i}`]).flat()])
-    eq('conversation:add: more than 20 is refused before sending', [r.code, /At most 20/.test(r.out), seen.length], [2, true, 0])
-    r = await run(['conversation:get', 'gone'])
-    eq('conversation:get: 404 says how to start another', /faces conversation:create/.test(r.out), true)
-    r = await run(['conversation:compact', 'any'])
-    eq('conversation:compact: any-face 422 says to name the face', /faces conversation:compact any <face>/.test(r.out), true)
-    await run(['conversation:compact', 'any', 'alice'])
-    eq('conversation:compact: the face is sent', last('/v1/conversations/any/compact'), {model: 'alice'})
-    r = await run(['conversation:close', 'fs_1', '--yes', '--json'])
-    eq('conversation:close: the server\'s answer', JSON.parse(r.out).deleted, true)
+    r = await run(['state:add', 'fs_1'])
+    eq('state:add: nothing to add is refused before sending', [r.code, seen.length], [2, 0])
+    r = await run(['state:add', 'fs_1', ...Array.from({length: 21}, (_, i) => ['-m', `m${i}`]).flat()])
+    eq('state:add: more than 20 is refused before sending', [r.code, /At most 20/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['state:get', 'gone'])
+    eq('state:get: 404 says how to start another', /faces state:create/.test(r.out), true)
+    r = await run(['state:compact', 'any'])
+    eq('state:compact: any-face 422 says to name the face', /faces state:compact any <face>/.test(r.out), true)
+    await run(['state:compact', 'any', 'alice'])
+    eq('state:compact: the face is sent', last('/v1/states/any/compact'), {model: 'alice'})
+    seen.length = 0
+    await run(['conversation:create', 'alice'])
+    eq('conversation:create: the old name still works, and goes to /v1/states', [seen.length, seen[0]?.url], [1, '/v1/states'])
+    r = await run(['state:close', 'fs_1', '--yes', '--json'])
+    eq('state:close: the server\'s answer', JSON.parse(r.out).deleted, true)
 
     await run(['causes', 'alice', '-m', 'Now?', '--conversation', 'fs_1', '--premise', 'a=1', '--premise-description', 'a=x'])
     eq('causes: conversation and premises sent, causes_visible left out', last('/v1/causes'),
@@ -1676,7 +1679,7 @@ async function conversationsOverHttp() {
     eq('causes: --session still sent as session', last('/v1/causes'), {model: 'alice', messages: [{role: 'user', content: 'Now?'}], session: 'fs_1', causes_visible: false})
     seen.length = 0
     r = await run(['causes', 'alice', '-m', 'Now?', '--premise', 'a=1'])
-    eq('causes: premises without a conversation are refused before sending', [r.code, /belong to a conversation/.test(r.out), seen.length], [2, true, 0])
+    eq('causes: premises without a conversation are refused before sending', [r.code, /belong to a state/.test(r.out), seen.length], [2, true, 0])
 
     await run(['chat:chat', 'alice@gpt-x', '-m', 'one', '--json'])
     let t = await run(['chat:thread', 'alice@gpt-x', '-m', 'first', '--json'])

@@ -2,7 +2,7 @@ import {Args, Flags} from '@oclif/core'
 import {BaseCommand} from '../../base.js'
 import {FacesAPIError} from '../../client.js'
 import {
-  CONVERSATIONS_PATH,
+  STATES_PATH,
   Conversation,
   MAX_CONVERSATION_ITEMS,
   PREMISE_DESCRIPTION_FLAG_DESCRIPTION,
@@ -13,13 +13,16 @@ import {
   parsePremises,
 } from '../../conversation.js'
 
-export default class ConversationCreate extends BaseCommand {
+export default class StateCreate extends BaseCommand {
   static description =
-    'Start a conversation. The server keeps the whole conversation: your messages, each face\'s reply with ' +
-    'its cause, decisions, and premises (named facts you declare). Pass its id with --conversation on chat, ' +
-    'causes or decide and send only what is new. Name a face and the conversation takes that face only; ' +
+    'Create a state: something you build and Faces keeps and watches. It holds your premises (named facts ' +
+    'you declare), the decisions faces made, each face\'s reply with its cause, and your messages, each ' +
+    'decision kept with the premises it was made under. Pass its id with --conversation on chat, ' +
+    'causes or decide and send only what is new. Name a face and the state takes that face only; ' +
     'leave it out and it takes any of your faces. Opening one is free; each turn costs what it costs ' +
-    'without one. A conversation expires 30 days after it was last used.'
+    'without one. A state expires 30 days after it was last used.'
+
+  static aliases = ['conversation:create']
 
   static examples = [
     '<%= config.bin %> <%= command.id %> alice',
@@ -33,7 +36,7 @@ export default class ConversationCreate extends BaseCommand {
     'causes-visible': Flags.boolean({
       description:
         'Whether each face reads the other faces\' causes. On by default; --no-causes-visible keeps each ' +
-        'face to its own. Matters only in a conversation with several faces.',
+        'face to its own. Matters only in a state with several faces.',
       default: true,
       allowNo: true,
     }),
@@ -46,16 +49,16 @@ export default class ConversationCreate extends BaseCommand {
     face: Args.string({
       description:
         'The face alone: an alias, owner:alias, or a composite such as "(a | b)". No @model. Leave it out ' +
-        'for a conversation that takes any of your faces.',
+        'for a state that takes any of your faces.',
       required: false,
     }),
   }
 
   async run(): Promise<unknown> {
-    const {args, flags} = await this.parse(ConversationCreate)
+    const {args, flags} = await this.parse(StateCreate)
     const client = this.makeClient(flags)
     const face = args.face?.trim()
-    if (face?.includes('@')) this.error(`A conversation is with a face alone: ${face.slice(0, face.lastIndexOf('@'))}`)
+    if (face?.includes('@')) this.error(`A state is with a face alone: ${face.slice(0, face.lastIndexOf('@'))}`)
 
     let items: Array<Record<string, unknown>>
     try {
@@ -64,7 +67,7 @@ export default class ConversationCreate extends BaseCommand {
       this.error(err instanceof Error ? err.message : String(err))
     }
     if (items.length > MAX_CONVERSATION_ITEMS) {
-      this.error(`At most ${MAX_CONVERSATION_ITEMS} messages and premises at a time (got ${items.length}). Add the rest with faces conversation:add.`)
+      this.error(`At most ${MAX_CONVERSATION_ITEMS} messages and premises at a time (got ${items.length}). Add the rest with faces state:add.`)
     }
 
     const body: Record<string, unknown> = {causes_visible: flags['causes-visible']}
@@ -73,7 +76,7 @@ export default class ConversationCreate extends BaseCommand {
 
     let data: Conversation
     try {
-      data = (await client.post(CONVERSATIONS_PATH, {body})) as Conversation
+      data = (await client.post(STATES_PATH, {body})) as Conversation
     } catch (err) {
       if (err instanceof FacesAPIError) {
         const hint = conversationHint(err)

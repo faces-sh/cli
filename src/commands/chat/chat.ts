@@ -13,7 +13,7 @@ export default class ChatChat extends BaseCommand {
     'right endpoint from the model catalog. A face named without a model answers on its default model. ' +
     '--show-cause also prints the cause, and --cause-only asks for the cause alone, with no answer. ' +
     'Add --style <medium> to apply a style the face has built, --conversation to take the turn in a ' +
-    'conversation (see faces conversation:create), and --compaction to read a compaction.'
+    'state (see faces state:create), and --compaction to read a compaction.'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> socrates -m "What is virtue?"',
@@ -21,8 +21,8 @@ export default class ChatChat extends BaseCommand {
     '<%= config.bin %> <%= command.id %> socrates -m "Should I sign a grant I have not read?" --show-cause',
     '<%= config.bin %> <%= command.id %> socrates -m "Should I sign a grant I have not read?" --cause-only',
     '<%= config.bin %> <%= command.id %> socrates -m "Can you just sign it?" --cause "I will not sign what I have not read."',
-    '<%= config.bin %> <%= command.id %> alice -m "So what do I tell them tomorrow?" --conversation fs_CONVERSATION_ID',
-    '<%= config.bin %> <%= command.id %> alice -m "Is this vendor worth a closer look?" --conversation fs_CONVERSATION_ID ' +
+    '<%= config.bin %> <%= command.id %> alice -m "So what do I tell them tomorrow?" --conversation fs_STATE_ID',
+    '<%= config.bin %> <%= command.id %> alice -m "Is this vendor worth a closer look?" --conversation fs_STATE_ID ' +
       '--premise budget_usd=50000 --premise-description budget_usd="the most we can spend this year"',
     '<%= config.bin %> <%= command.id %> "(socrates | nietzsche)@claude-sonnet-4-6" -m "What is virtue?"',
     '<%= config.bin %> <%= command.id %> --formula "socrates | nietzsche" --llm claude-sonnet-4-6 -m "What is virtue?"',

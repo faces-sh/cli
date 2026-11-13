@@ -1,15 +1,16 @@
 import {Flags} from '@oclif/core'
 import {FacesAPIError} from './client.js'
 
-export const CONVERSATIONS_PATH = '/v1/conversations'
+/** States, at their current path. /v1/conversations is the deprecated old name. */
+export const STATES_PATH = '/v1/states'
 
-/** The most items one request to add to a conversation takes. */
+/** The most items one request to add to a state takes. */
 export const MAX_CONVERSATION_ITEMS = 20
 
 /** A premise key, as the API takes it. */
 const PREMISE_KEY = /^[A-Za-z0-9_-]{1,64}$/
 
-/** A conversation as the API returns it. */
+/** A state as the API returns it. */
 export interface Conversation {
   object?: string
   id?: string
@@ -37,12 +38,12 @@ export interface PremiseState {
 }
 
 export const CONVERSATION_FLAG_DESCRIPTION =
-  'Add this turn to a conversation, by id (from faces conversation:create). Send only the new message: ' +
-  'the conversation so far is read before it. A conversation opened with one face takes only that face.'
+  'Add this turn to a state, by id (from faces state:create). Send only the new message: ' +
+  'the state so far is read before it. A state opened with one face takes only that face.'
 
 export const PREMISE_FLAG_DESCRIPTION =
   'A premise, as key=value (repeatable): a named fact the face\'s answers depend on, kept on the ' +
-  'conversation. The key is 1 to 64 letters, digits, _ or -. The value is read as JSON when it is JSON ' +
+  'state. The key is 1 to 64 letters, digits, _ or -. The value is read as JSON when it is JSON ' +
   '(50000, true, null, ["a","b"], {"max":3}) and as text otherwise, so plan=annual is the text "annual". ' +
   'Quote it to keep a number as text: --premise \'code="007"\'. A newer value of a key replaces it from ' +
   'then on. A key used for the first time needs --premise-description.'
@@ -50,11 +51,11 @@ export const PREMISE_FLAG_DESCRIPTION =
 export const PREMISE_DESCRIPTION_FLAG_DESCRIPTION =
   'What a --premise means, in plain words, as key="text" (repeatable, one per key), e.g. ' +
   '--premise-description budget_usd="the most we can spend this year". Required the first time a key is ' +
-  'used in a conversation, and kept after that.'
+  'used in a state, and kept after that.'
 
 export const CAUSES_VISIBLE_TURN_FLAG_DESCRIPTION =
-  'Whether the face reads the other faces\' causes on this turn, in a conversation with several faces. ' +
-  'Leave it out to follow the conversation (see faces conversation:create --no-causes-visible).'
+  'Whether the face reads the other faces\' causes on this turn, in a state with several faces. ' +
+  'Leave it out to follow the state (see faces state:create --no-causes-visible).'
 
 /**
  * --conversation, --premise, --premise-description and --causes-visible, for
@@ -72,11 +73,11 @@ export function conversationTurnFlags(opts: {suffix?: string; exclusive?: string
   }
 }
 
-/** The lines a conversation prints as. */
+/** The lines a state prints as. */
 export function conversationLines(c: Conversation): string[] {
   const pairs: Array<[string, unknown]> = [
-    ['conversation', c.id],
-    ['face', c.model ?? (c.object === 'conversation' ? 'any of your faces' : undefined)],
+    ['state', c.id],
+    ['face', c.model ?? (c.object === 'state' || c.object === 'conversation' ? 'any of your faces' : undefined)],
     ['status', c.status],
     ['turns', c.turns],
     ['items', c.items],
@@ -88,11 +89,11 @@ export function conversationLines(c: Conversation): string[] {
   return pairs.filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => `${`${k}:`.padEnd(14)}${v}`)
 }
 
-/** What to add to a conversation refusal, or undefined when the server's message says it all. */
+/** What to add to a state refusal, or undefined when the server's message says it all. */
 export function conversationHint(err: FacesAPIError): string | undefined {
   if (err.statusCode === 404) {
-    return 'A conversation expires 30 days after it was last used, and a closed one cannot be used. ' +
-      'Start another with: faces conversation:create'
+    return 'A state expires 30 days after it was last used, and a closed one cannot be used. ' +
+      'Start another with: faces state:create'
   }
   const fresh = err.statusCode === 422 ? /premise '([A-Za-z0-9_-]{1,64})' is new/.exec(err.message) : null
   if (fresh) return `Say what it means: --premise-description ${fresh[1]}="what it means, in plain words"`
@@ -158,7 +159,7 @@ export function parsePremises(premises: string[] = [], descriptions: string[] = 
 }
 
 /**
- * The conversation fields of a turn (chat, decide, causes): `conversation`,
+ * The state fields of a turn (chat, decide, causes): `conversation`,
  * `premises` and `causes_visible`, when given. `session` is sent by
  * chatExtras; it is the old name for the same id and counts as one here.
  * Throws with the sentence to show.
@@ -177,7 +178,7 @@ export function conversationFields(flags: {
   const premises = parsePremises(flags.premise, flags['premise-description'])
   const inConversation = Boolean(flags.conversation || flags.session)
   if (!inConversation && (premises.length > 0 || flags['causes-visible'] !== undefined)) {
-    throw new Error('Premises and --causes-visible belong to a conversation: add --conversation <id> (from faces conversation:create).')
+    throw new Error('Premises and --causes-visible belong to a state: add --conversation <id> (from faces state:create).')
   }
   if (flags.conversation) out.conversation = flags.conversation
   if (premises.length > 0) out.premises = premises
@@ -245,7 +246,7 @@ function choiceOf(out: Record<string, unknown>): string {
 }
 
 /**
- * A conversation's items as lines a person reads: each message, decision and
+ * A state's items as lines a person reads: each message, decision and
  * premise once, in order. A decision is one item; a premise, or a decision
  * stored before decisions became one item, is two (the call and its output),
  * printed together at the output, under the output's id.

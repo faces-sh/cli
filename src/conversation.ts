@@ -1,13 +1,20 @@
 import {Flags} from '@oclif/core'
 import {FacesAPIError} from './client.js'
 
-export const CONVERSATIONS_PATH = '/v1/conversations'
+/** States: the server keeps the situation your agent builds. `/v1/conversations` is the old name. */
+export const CONVERSATIONS_PATH = '/v1/states'
 
 /** The most items one request to add to a conversation takes. */
 export const MAX_CONVERSATION_ITEMS = 20
 
 /** A premise key, as the API takes it. */
 const PREMISE_KEY = /^[A-Za-z0-9_-]{1,64}$/
+
+/** A premise's status, as the API takes it; `stated` when none is given. */
+export const PREMISE_STATUSES = ['stated', 'verified', 'assumed', 'unresolved', 'invalidated'] as const
+
+/** The most premises and decisions one `depends_on` names. */
+export const MAX_DEPENDS_ON = 200
 
 /** A conversation as the API returns it. */
 export interface Conversation {
@@ -28,21 +35,40 @@ export interface Premise {
   key: string
   value: unknown
   description?: string
+  status?: string
+  depends_on?: string[]
 }
 
 /** A key's current value, as the API returns it. */
 export interface PremiseState {
   value?: unknown
   description?: string | null
+  /** The effective status: `invalidated` when anything it depends on is. */
+  status?: string
+  /** The status the agent set, when it differs from `status`. */
+  asserted_status?: string
+  /** What invalidated it, when that was something it depends on. */
+  because?: string | null
+  depends_on?: string[]
+}
+
+/** One effective status a write changed. */
+export interface StatusChange {
+  kind?: string
+  key?: string
+  id?: string
+  from?: string
+  to?: string
+  because?: string | null
 }
 
 export const CONVERSATION_FLAG_DESCRIPTION =
-  'Add this turn to a conversation, by id (from faces conversation:create). Send only the new message: ' +
-  'the conversation so far is read before it. A conversation opened with one face takes only that face.'
+  'Add this turn to a state, by id (from faces state:create). Send only what is new: ' +
+  'the state so far is read before it. A state opened with one face takes only that face.'
 
 export const PREMISE_FLAG_DESCRIPTION =
   'A premise, as key=value (repeatable): a named fact the face\'s answers depend on, kept on the ' +
-  'conversation. The key is 1 to 64 letters, digits, _ or -. The value is read as JSON when it is JSON ' +
+  'state. The key is 1 to 64 letters, digits, _ or -. The value is read as JSON when it is JSON ' +
   '(50000, true, null, ["a","b"], {"max":3}) and as text otherwise, so plan=annual is the text "annual". ' +
   'Quote it to keep a number as text: --premise \'code="007"\'. A newer value of a key replaces it from ' +
   'then on. A key used for the first time needs --premise-description.'
@@ -50,11 +76,21 @@ export const PREMISE_FLAG_DESCRIPTION =
 export const PREMISE_DESCRIPTION_FLAG_DESCRIPTION =
   'What a --premise means, in plain words, as key="text" (repeatable, one per key), e.g. ' +
   '--premise-description budget_usd="the most we can spend this year". Required the first time a key is ' +
-  'used in a conversation, and kept after that.'
+  'used in a state, and kept after that.'
+
+export const PREMISE_STATUS_FLAG_DESCRIPTION =
+  `A --premise's status, as key=status (repeatable, one per key): ${PREMISE_STATUSES.join(', ')}. ` +
+  'Left out, a new premise is stated. An invalidated premise invalidates everything that depends on it; ' +
+  'set it to another status to restore them.'
+
+export const PREMISE_DEPENDS_ON_FLAG_DESCRIPTION =
+  'What a --premise rests on, as key=a,b (repeatable, one per key): premise keys and decision ids already in ' +
+  `the state or set in the same request, at most ${MAX_DEPENDS_ON}. key= with nothing after it clears it; ` +
+  'left out, a newer value keeps what the key rested on before.'
 
 export const CAUSES_VISIBLE_TURN_FLAG_DESCRIPTION =
   'Whether the face reads the other faces\' causes on this turn, in a conversation with several faces. ' +
-  'Leave it out to follow the conversation (see faces conversation:create --no-causes-visible).'
+  'Leave it out to follow the state (see faces state:create --no-causes-visible).'
 
 /**
  * --conversation, --premise, --premise-description and --causes-visible, for
@@ -68,6 +104,8 @@ export function conversationTurnFlags(opts: {suffix?: string; exclusive?: string
     conversation: Flags.string({description: d(CONVERSATION_FLAG_DESCRIPTION), exclusive}),
     premise: Flags.string({description: d(`${PREMISE_FLAG_DESCRIPTION} Needs --conversation.`), multiple: true, exclusive}),
     'premise-description': Flags.string({description: d(PREMISE_DESCRIPTION_FLAG_DESCRIPTION), multiple: true, dependsOn: ['premise'], exclusive}),
+    'premise-status': Flags.string({description: d(PREMISE_STATUS_FLAG_DESCRIPTION), multiple: true, dependsOn: ['premise'], exclusive}),
+    'premise-depends-on': Flags.string({description: d(PREMISE_DEPENDS_ON_FLAG_DESCRIPTION), multiple: true, dependsOn: ['premise'], exclusive}),
     'causes-visible': Flags.boolean({description: d(`${CAUSES_VISIBLE_TURN_FLAG_DESCRIPTION} Needs --conversation.`), allowNo: true, exclusive}),
   }
 }
@@ -75,8 +113,8 @@ export function conversationTurnFlags(opts: {suffix?: string; exclusive?: string
 /** The lines a conversation prints as. */
 export function conversationLines(c: Conversation): string[] {
   const pairs: Array<[string, unknown]> = [
-    ['conversation', c.id],
-    ['face', c.model ?? (c.object === 'conversation' ? 'any of your faces' : undefined)],
+    ['state', c.id],
+    ['face', c.model ?? (c.object === 'conversation' || c.object === 'state' ? 'any of your faces' : undefined)],
     ['status', c.status],
     ['turns', c.turns],
     ['items', c.items],
@@ -91,11 +129,14 @@ export function conversationLines(c: Conversation): string[] {
 /** What to add to a conversation refusal, or undefined when the server's message says it all. */
 export function conversationHint(err: FacesAPIError): string | undefined {
   if (err.statusCode === 404) {
-    return 'A conversation expires 30 days after it was last used, and a closed one cannot be used. ' +
-      'Start another with: faces conversation:create'
+    return 'A state expires 30 days after it was last used, and a closed one cannot be used. ' +
+      'Start another with: faces state:create'
   }
   const fresh = err.statusCode === 422 ? /premise '([A-Za-z0-9_-]{1,64})' is new/.exec(err.message) : null
   if (fresh) return `Say what it means: --premise-description ${fresh[1]}="what it means, in plain words"`
+  if (err.statusCode === 422 && /depends_on` names no premise or decision/.test(err.message)) {
+    return 'Name premise keys and decision ids already in the state (faces state:items <id>), or premises set in the same request.'
+  }
   return undefined
 }
 
@@ -132,7 +173,12 @@ function checkKey(key: string, flag: string): void {
  * Descriptions are matched by key, not by position: oclif does not keep the
  * order of two different flags, and a key is what the API matches on too.
  */
-export function parsePremises(premises: string[] = [], descriptions: string[] = []): Premise[] {
+export function parsePremises(
+  premises: string[] = [],
+  descriptions: string[] = [],
+  statuses: string[] = [],
+  dependsOn: string[] = [],
+): Premise[] {
   const out: Premise[] = []
   const seen = new Map<string, Premise>()
   for (const raw of premises) {
@@ -154,6 +200,43 @@ export function parsePremises(premises: string[] = [], descriptions: string[] = 
     described.add(key)
     p.description = text.trim()
   }
+  const statused = new Set<string>()
+  for (const raw of statuses) {
+    const [key, text] = splitPair(raw, '--premise-status', 'key=status')
+    checkKey(key, '--premise-status')
+    const p = seen.get(key)
+    if (!p) throw new Error(`--premise-status names '${key}', which no --premise sets. Add --premise ${key}=<value>.`)
+    if (statused.has(key)) throw new Error(`--premise-status sets '${key}' twice. Give one status per key.`)
+    const status = text.trim().toLowerCase()
+    if (!(PREMISE_STATUSES as readonly string[]).includes(status)) {
+      throw new Error(`--premise-status for '${key}' is one of ${PREMISE_STATUSES.join(', ')} (got '${text}').`)
+    }
+    statused.add(key)
+    p.status = status
+  }
+  const linked = new Set<string>()
+  for (const raw of dependsOn) {
+    const [key, text] = splitPair(raw, '--premise-depends-on', 'key=a,b')
+    checkKey(key, '--premise-depends-on')
+    const p = seen.get(key)
+    if (!p) throw new Error(`--premise-depends-on names '${key}', which no --premise sets. Add --premise ${key}=<value>.`)
+    if (linked.has(key)) throw new Error(`--premise-depends-on sets '${key}' twice. List everything it rests on once, comma separated.`)
+    const deps = parseDependsOn(text, '--premise-depends-on')
+    if (deps.includes(key)) throw new Error(`--premise-depends-on: premise '${key}' cannot depend on itself.`)
+    linked.add(key)
+    p.depends_on = deps
+  }
+  return out
+}
+
+/**
+ * A comma-separated `depends_on`, as the API's list: premise keys and decision
+ * ids, each once. Empty text is the empty list, which clears it. Throws with
+ * the sentence to show.
+ */
+export function parseDependsOn(raw: string, flag = '--depends-on'): string[] {
+  const out = [...new Set(raw.split(',').map((x) => x.trim()).filter(Boolean))]
+  if (out.length > MAX_DEPENDS_ON) throw new Error(`${flag} names at most ${MAX_DEPENDS_ON} premises and decisions (got ${out.length}).`)
   return out
 }
 
@@ -168,16 +251,18 @@ export function conversationFields(flags: {
   session?: string
   premise?: string[]
   'premise-description'?: string[]
+  'premise-status'?: string[]
+  'premise-depends-on'?: string[]
   'causes-visible'?: boolean
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (flags.conversation && flags.session && flags.conversation !== flags.session) {
     throw new Error('--session is the old name for --conversation: pass one of them, not two different ids.')
   }
-  const premises = parsePremises(flags.premise, flags['premise-description'])
+  const premises = parsePremises(flags.premise, flags['premise-description'], flags['premise-status'], flags['premise-depends-on'])
   const inConversation = Boolean(flags.conversation || flags.session)
   if (!inConversation && (premises.length > 0 || flags['causes-visible'] !== undefined)) {
-    throw new Error('Premises and --causes-visible belong to a conversation: add --conversation <id> (from faces conversation:create).')
+    throw new Error('Premises and --causes-visible belong to a state: add --conversation <id> (from faces state:create).')
   }
   if (flags.conversation) out.conversation = flags.conversation
   if (premises.length > 0) out.premises = premises
@@ -198,13 +283,35 @@ export function shownValue(v: unknown): string {
   return v === undefined ? '-' : JSON.stringify(v)
 }
 
+/** A premise's status as it prints: nothing for a plain stated one. */
+function statusNote(p: PremiseState | undefined): string {
+  if (!p) return ''
+  const parts: string[] = []
+  if (p.status && p.status !== 'stated') parts.push(p.status)
+  if (p.asserted_status) parts.push(`set ${p.asserted_status}`)
+  if (p.because) parts.push(`because ${p.because}`)
+  if (p.depends_on && p.depends_on.length > 0) parts.push(`rests on ${p.depends_on.join(', ')}`)
+  return parts.length > 0 ? `  [${parts.join('; ')}]` : ''
+}
+
+/** status_changes, as lines; none when the list is empty. */
+export function statusChangeLines(changes: StatusChange[] | undefined): string[] {
+  if (!changes || changes.length === 0) return []
+  const lines = [`${changes.length === 1 ? '1 status changed' : `${changes.length} statuses changed`}:`]
+  for (const c of changes) {
+    const what = c.kind === 'decision' ? `decision ${c.id ?? '?'}` : `premise ${c.key ?? '?'}`
+    lines.push(`  ${what}: ${c.from ?? '-'} -> ${c.to ?? '-'}${c.because ? ` (because ${c.because})` : ''}`)
+  }
+  return lines
+}
+
 /** The premises in force, one per line. */
 export function premiseLines(premises: Record<string, PremiseState> | undefined): string[] {
   const entries = Object.entries(premises ?? {})
   if (entries.length === 0) return ['premises: none']
   const lines = ['premises:']
   for (const [key, p] of entries) {
-    lines.push(`  ${key} = ${shownValue(p?.value)}${p?.description ? `   (${p.description})` : ''}`)
+    lines.push(`  ${key} = ${shownValue(p?.value)}${statusNote(p)}${p?.description ? `   (${p.description})` : ''}`)
   }
   return lines
 }
@@ -265,7 +372,8 @@ export function itemLines(items: Array<Record<string, unknown>>): string[] {
       const answer = (it.answer && typeof it.answer === 'object' ? it.answer : {}) as Record<string, unknown>
       const question = (it.question && typeof it.question === 'object' ? it.question : {}) as Record<string, unknown>
       const result = answer.result === undefined || answer.result === null ? '-' : String(answer.result)
-      lines.push(`${head}${String(it.face ?? 'face')}${it.model ? ` (${it.model})` : ''} decided: ${questionText(question)} -> ${result}`)
+      const status = it.status === 'invalidated' ? `   [invalidated${it.because ? `, because ${String(it.because)}` : ''}]` : ''
+      lines.push(`${head}${String(it.face ?? 'face')}${it.model ? ` (${it.model})` : ''} decided: ${questionText(question)} -> ${result}${status}`)
       if (typeof it.cause === 'string' && it.cause) lines.push(`${pad}cause: ${it.cause}`)
       continue
     }
@@ -311,6 +419,7 @@ export interface StaleDecision {
   choice?: unknown
   face?: string
   changed?: Record<string, {was?: unknown; now?: unknown}>
+  via?: string | null
 }
 
 /** decisions_made_under_old_values, as lines; none when the list is empty. */
@@ -322,7 +431,7 @@ export function staleDecisionLines(stale: StaleDecision[] | undefined): string[]
   for (const d of stale) {
     const q = d.question ? questionText(d.question) : '?'
     const choice = d.choice === undefined || d.choice === null ? '-' : String(d.choice)
-    lines.push(`  ${d.face ?? 'face'}: ${q} -> ${choice}${d.call_id ? `   [${d.call_id}]` : ''}`)
+    lines.push(`  ${d.face ?? 'face'}: ${q} -> ${choice}${d.call_id ? `   [${d.call_id}]` : ''}${d.via ? `, through ${d.via}` : ''}`)
     for (const [key, c] of Object.entries(d.changed ?? {})) {
       lines.push(`    ${key}: was ${shownValue(c?.was)}, now ${shownValue(c?.now)}`)
     }

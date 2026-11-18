@@ -40,7 +40,7 @@ function planLabel(plan?: string | null): string {
 }
 
 export default class AuthConnect extends BaseCommand {
-  static description = 'Link your ChatGPT account by device-code authorization (Connect and Pro). Codex-eligible models then run on the ChatGPT plan, at /v1/responses.'
+  static description = 'Link your ChatGPT account by device-code authorization (Connect and Pro). Interviews and style builds then run on the ChatGPT plan instead of credits.'
 
   static args = {
     provider: Args.string({
@@ -165,7 +165,7 @@ export default class AuthConnect extends BaseCommand {
           if (!plan || plan === 'free') {
             this.log('⚠️  Your ChatGPT plan may not include API access. Connecting requires a paid plan (Plus/Pro/Team, etc.).')
           } else {
-            this.log('Codex-eligible models (see faces models:list --chatgpt) now run on your ChatGPT plan, at /v1/responses.')
+            this.log('Interviews and style builds now run on your ChatGPT plan where the model allows it.')
           }
         }
         return output

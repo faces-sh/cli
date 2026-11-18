@@ -6,10 +6,10 @@ import {seg} from '../../utils.js'
 
 export default class ConversationClose extends BaseCommand {
   static description =
-    'Close a conversation. A closed conversation takes no more turns and cannot be read or compacted. Its ' +
+    'Close a state. A closed state takes no more turns and cannot be read or compacted. Its ' +
     'compactions stay usable until they expire. Free.'
 
-  static examples = ['<%= config.bin %> <%= command.id %> fs_CONVERSATION_ID --yes']
+  static examples = ['<%= config.bin %> <%= command.id %> fs_STATE_ID --yes']
 
   static flags = {
     ...BaseCommand.baseFlags,
@@ -17,13 +17,13 @@ export default class ConversationClose extends BaseCommand {
   }
 
   static args = {
-    conversation_id: Args.string({description: 'Conversation id (from conversation:create)', required: true}),
+    conversation_id: Args.string({description: 'State id (from state:create)', required: true}),
   }
 
   async run(): Promise<unknown> {
     const {args, flags} = await this.parse(ConversationClose)
     const client = this.makeClient(flags)
-    await this.confirmOrRefuse(`Close conversation ${args.conversation_id}? It cannot be reopened.`, flags.yes)
+    await this.confirmOrRefuse(`Close state ${args.conversation_id}? It cannot be reopened.`, flags.yes)
 
     let data: unknown
     try {
@@ -36,7 +36,7 @@ export default class ConversationClose extends BaseCommand {
       throw err
     }
 
-    if (!this.jsonEnabled()) this.log(`Closed conversation ${args.conversation_id}.`)
+    if (!this.jsonEnabled()) this.log(`Closed state ${args.conversation_id}.`)
     return data
   }
 }

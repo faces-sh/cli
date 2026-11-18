@@ -1,7 +1,7 @@
 import {Args, Flags} from '@oclif/core'
 import {BaseCommand} from '../base.js'
 import {FacesAPIError, missingFieldsNote} from '../client.js'
-import {conversationFields, conversationTurnFlags} from '../conversation.js'
+import {conversationFields, conversationTurnFlags, MAX_DEPENDS_ON, parseDependsOn} from '../conversation.js'
 import {
   DECISION_MODELS,
   decisionModels,
@@ -28,8 +28,8 @@ export default class Decide extends BaseCommand {
   static description =
     'Ask what a face would decide. Describe a situation, ask typed questions about it, and get back numbers, ' +
     'as this face: a yes-or-no (noul), a pick between options (choice), or a place on a graded scale (score). ' +
-    'Chat gives you what a face would say; this gives you what it would decide, for routing, simulations or ' +
-    'panels. The face\'s cause for each question guides the decision model\'s (--model) answer. A face\'s ' +
+    'faces choices gives you the options a face would weigh; this gives you what it would decide, for routing, ' +
+    'simulations or panels. The face\'s cause for each question guides the decision model\'s (--model) answer. A face\'s ' +
     'answer takes about 10 to 20 seconds; one that runs long is held open by the server and can take a ' +
     'minute or more. --baseline asks the decision model alone (no-face baseline), in about a second: the ' +
     'number to compare a face\'s answer against. Name a face and ask no questions for its cause alone. On ' +
@@ -125,6 +125,13 @@ export default class Decide extends BaseCommand {
       default: false,
     }),
     ...conversationTurnFlags({exclusive: ['baseline']}),
+    'depends-on': Flags.string({
+      description:
+        'In a state (--conversation), what this decision rests on, comma separated: premise keys and decision ids ' +
+        `already in the state or set with --premise, at most ${MAX_DEPENDS_ON}. The decision is shown those, and is ` +
+        'invalidated when one of them is. Left out, it rests on every premise in force.',
+      exclusive: ['baseline'],
+    }),
     session: Flags.string({description: SESSION_FLAG_DESCRIPTION, exclusive: ['baseline']}),
     compaction: Flags.string({description: COMPACTION_FLAG_DESCRIPTION, exclusive: ['baseline']}),
     format: Flags.string({
@@ -158,6 +165,10 @@ export default class Decide extends BaseCommand {
     let turn: Record<string, unknown> = {}
     try {
       turn = conversationFields(flags)
+      if (flags['depends-on'] !== undefined) {
+        if (!flags.conversation && !flags.session) throw new Error('--depends-on belongs to a state: add --conversation <id> (from faces state:create).')
+        turn.depends_on = parseDependsOn(flags['depends-on'])
+      }
     } catch (err) {
       this.error(err instanceof Error ? err.message : String(err))
     }
@@ -211,7 +222,7 @@ export default class Decide extends BaseCommand {
       )
     }
 
-    let data: DecisionCauses & {answers?: Record<string, unknown>}
+    let data: DecisionCauses & {answers?: Record<string, unknown>; decision_ids?: Record<string, string>}
     try {
       data = (await this.ask(client, body, flags.retry, json, flags.format === 'openai' ? '/v1/decisions' : '/v1/systemone')) as typeof data
     } catch (err) {
@@ -236,6 +247,11 @@ export default class Decide extends BaseCommand {
     if (flags['show-cause'] && cause.length > 0 && face) process.stderr.write(`${reasoningHeading(face)}\n${cause.join('\n')}\n\n`)
     const answers = flags.format === 'openai' ? fromOpenAIAnswers(data.answers, questions) : (data.answers ?? {})
     for (const line of decisionLines(answers)) this.log(line)
+    const ids = Object.entries(data.decision_ids ?? {})
+    if (ids.length > 0) {
+      this.log('')
+      for (const [q, id] of ids) this.log(`decision id (${q}): ${id}`)
+    }
     return data
   }
 

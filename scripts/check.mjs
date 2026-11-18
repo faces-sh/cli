@@ -68,7 +68,8 @@ import {pollCompileProgress, pollUntilPaused} from '../dist/poll.js'
 import {childPath} from '../dist/paths.js'
 import {score10} from '../dist/fidelity.js'
 import {resultLines, benchmarkHint} from '../dist/benchmark.js'
-import {conversationHint, parsePremises, premiseValue, conversationFields, clientItems, conversationLines, itemLines, premiseLines, staleDecisionLines} from '../dist/conversation.js'
+import {conversationHint, parsePremises, parseDependsOn, premiseValue, conversationFields, clientItems, conversationLines, itemLines, premiseLines, staleDecisionLines, statusChangeLines} from '../dist/conversation.js'
+import {asView, choicesLines, choicesHint} from '../dist/choices.js'
 
 let failed = 0
 let ran = 0
@@ -826,18 +827,6 @@ async function pathGuard() {
 }
 await pathGuard()
 
-// A thread id names a file under ~/.faces/threads, so it must not name any other.
-{
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'faces-check-'))
-  fs.mkdirSync(path.join(home, '.faces'))
-  const config = path.join(home, '.faces', 'config.json')
-  fs.writeFileSync(config, '{}')
-  const run = spawnSync(process.execPath, ['bin/run.js', 'chat:thread', '--id', '../config', '--delete'], {env: {...process.env, HOME: home}, encoding: 'utf8'})
-  eq('thread id: a path is refused', run.status !== 0, true)
-  eq('thread id: the config survives', fs.existsSync(config), true)
-  fs.rmSync(home, {recursive: true, force: true})
-}
-
 // Catalog folders are deleted recursively, so a name must stay inside its parent.
 {
   const refuses = (name) => { try { childPath('/base/catalog', name); return false } catch { return true } }
@@ -1235,7 +1224,7 @@ async function groupNames() {
       r = await run(args)
       eq(`${args[0]} is gone`, [r.code !== 0, /not found/i.test(r.err)], [true, true])
     }
-    for (const args of [['face:list', '--team', GID], ['face:groups', 'ada', '--team', GID], ['models:list', '--codex'], ['chat:chat', 'ada', '--reasoning', 'hi'], ['decide', 'ada', '--reasoning']]) {
+    for (const args of [['face:list', '--team', GID], ['face:groups', 'ada', '--team', GID], ['models:list', '--codex'], ['decide', 'ada', '--reasoning']]) {
       r = await run(args)
       eq(`${args.at(-2) === '--team' ? args[0] + ' --team' : args.find((a) => a.startsWith('--'))} is gone`, [r.code !== 0, /Nonexistent flag/i.test(r.err)], [true, true])
     }
@@ -1390,19 +1379,17 @@ async function fidelityFlow() {
   const env = {...process.env, HOME: home, FACES_BASE_URL: `http://127.0.0.1:${srv.address().port}`, FACES_TOKEN: 'jwt-check'}
   const run = (args) => new Promise((r) => execFile(process.execPath, ['bin/run.js', ...args], {env}, (err, stdout, stderr) => r({code: err?.code ?? 0, out: stdout + stderr})))
   try {
-    let r = await run(['fidelity:start', 'ana'])
-    eq('fidelity:start names the next step', /run:\s+r1[\s\S]*fidelity:turn r1 -m/.test(r.out), true)
-    r = await run(['fidelity:start', 'bare'])
-    eq('fidelity:start: nothing compiled gets a hint', /Add a source with: faces compile:upload bare --file/.test(r.out), true)
-    r = await run(['fidelity:turn', 'r1', '-m', 'slow'])
-    eq('fidelity:turn: a held refusal is an error', [r.code, /HTTP 502: the face could not answer/.test(r.out)], [2, true])
-    r = await run(['fidelity:turn', 'r1', '-m', 'hello'])
-    eq('fidelity:turn prints both answers', /a:\nA-text\n\nb:\nB-text/.test(r.out), true)
+    for (const gone of ['fidelity:start', 'fidelity:turn', 'fidelity:run', 'chat:chat', 'chat:messages', 'chat:responses', 'chat:thread']) {
+      const g = await run([gone, 'ana'])
+      eq(`${gone} is retired`, [g.code !== 0, /not found/i.test(g.out)], [true, true])
+    }
+    turns.push({n: 1, message: 'hello', answers: {a: 'A-text', b: 'B-text'}})
+    let r
     r = await run(['fidelity:pick', 'r1', 'a'])
     eq('fidelity:pick finds the open turn', bodies.some((x) => x.startsWith('POST /v1/fidelity/r1/turns/1/choice {"pick":"a"}')), true)
     r = await run(['fidelity:pick', 'r1', 'b'])
-    eq('fidelity:pick before a message says so', /Turn 2 has no answers to pick from yet/.test(r.out), true)
-    await run(['fidelity:turn', 'r1', '-m', 'again'])
+    eq('fidelity:pick with no answers says turns are retired', /Turn 2 has no answers to pick from, and new turns are retired/.test(r.out), true)
+    turns.push({n: 2, message: 'again', answers: {a: 'A-text', b: 'B-text'}})
     r = await run(['fidelity:pick', 'r1', 'b', '--correction', 'what I would say'])
     eq('fidelity:pick sends the correction', bodies.some((x) => x.includes('/turns/2/choice {"pick":"b","correction":"what I would say"}')), true)
     eq('fidelity:pick: the final score', /Finished\. Fidelity: 1\.7 out of 10/.test(r.out), true)
@@ -1410,8 +1397,6 @@ async function fidelityFlow() {
     eq('fidelity:get reveals the face once done', /turn 1: picked a, the face, accepted, scored 1\n\s+turn 2: picked b, the competitor, corrected, scored 0\.7/.test(r.out), true)
     r = await run(['fidelity:save-thread', 'r1'])
     eq('fidelity:save-thread names the compile', /Saved as thread t9\nCompile it into the face: faces compile:thread:make t9/.test(r.out), true)
-    r = await run(['fidelity:run', 'ana'])
-    eq('fidelity:run needs a terminal', /needs a person at a terminal/.test(r.out), true)
   } finally {
     srv.close()
     fs.rmSync(home, {recursive: true, force: true})
@@ -1542,6 +1527,7 @@ eq('premises: descriptions matched by key, not position',
   parsePremises(['a=1', 'b=false'], ['b=the vendor is certified', 'a= the budget ']),
   [{key: 'a', value: 1, description: 'the budget'}, {key: 'b', value: false, description: 'the vendor is certified'}])
 const premiseError = (p, d) => { try { parsePremises(p, d); return undefined } catch (e) { return e.message } }
+const premiseError2 = (p, d, st, dep) => { try { parsePremises(p, d, st, dep); return '' } catch (e) { return e.message } }
 eq('premises: no = is refused', /takes key=value \(got 'oops'\)/.test(premiseError(['oops'])), true)
 eq('premises: empty key is refused', /takes key=value/.test(premiseError(['=1'])), true)
 eq('premises: a bad key is refused before sending', /1 to 64 letters, digits, _ or - \(got 'has space'\)/.test(premiseError(['has space=1'])), true)
@@ -1561,12 +1547,20 @@ eq('turn fields: --session counts as the conversation', conversationFields({sess
 eq('turn fields: the same id under both names is fine', conversationFields({conversation: 'fs_1', session: 'fs_1'}), {conversation: 'fs_1'})
 const turnError = (f) => { try { conversationFields(f); return undefined } catch (e) { return e.message } }
 eq('turn fields: two different ids are refused', /not two different ids/.test(turnError({conversation: 'fs_1', session: 'fs_2'})), true)
-eq('turn fields: premises with no conversation are refused', /belong to a conversation/.test(turnError({premise: ['a=1']})), true)
-eq('turn fields: causes_visible with no conversation is refused', /belong to a conversation/.test(turnError({'causes-visible': true})), true)
+eq('turn fields: premises with no conversation are refused', /belong to a state/.test(turnError({premise: ['a=1']})), true)
+eq('turn fields: causes_visible with no conversation is refused', /belong to a state/.test(turnError({'causes-visible': true})), true)
+eq('turn fields: status and depends_on go with the premise',
+  conversationFields({conversation: 'fs_1', premise: ['a=1', 'b=2'], 'premise-status': ['a=Assumed'], 'premise-depends-on': ['b=a, dec_1,a']}),
+  {conversation: 'fs_1', premises: [{key: 'a', value: 1, status: 'assumed'}, {key: 'b', value: 2, depends_on: ['a', 'dec_1']}]})
+eq('premises: depends_on= clears it', parsePremises(['a=1'], [], [], ['a=']), [{key: 'a', value: 1, depends_on: []}])
+eq('premises: an unknown status is refused', /is one of stated, verified, assumed, unresolved, invalidated \(got 'maybe'\)/.test(premiseError2(['a=1'], [], ['a=maybe'])), true)
+eq('premises: a status for no premise is refused', /names 'b', which no --premise sets/.test(premiseError2(['a=1'], [], ['b=verified'])), true)
+eq('premises: a premise resting on itself is refused', /cannot depend on itself/.test(premiseError2(['a=1'], [], [], ['a=a'])), true)
+eq('depends_on: at most 200', /at most 200/.test((() => { try { parseDependsOn(Array.from({length: 201}, (_, i) => `k${i}`).join(',')); return '' } catch (e) { return e.message } })()), true)
 eq('client items: premises first, then messages', clientItems(['hi'], [{key: 'a', value: 1}]), [{key: 'a', value: 1}, {type: 'message', role: 'user', content: 'hi'}])
 
-eq('conversation lines: any face, causes hidden', conversationLines({object: 'conversation', id: 'fs_1', model: null, turns: 0, items: 2, causes_visible: false, status: 'open'}), [
-  'conversation: fs_1', 'face:         any of your faces', 'status:       open', 'turns:        0', 'items:        2', 'causes:       each face reads its own only'])
+eq('conversation lines: any face, causes hidden', conversationLines({object: 'state', id: 'fs_1', model: null, turns: 0, items: 2, causes_visible: false, status: 'open'}), [
+  'state:        fs_1', 'face:         any of your faces', 'status:       open', 'turns:        0', 'items:        2', 'causes:       each face reads its own only'])
 eq('conversation lines: one face', conversationLines({object: 'conversation', id: 'fs_1', model: 'alice', causes_visible: true})[1], 'face:         alice')
 
 const loggedItems = [
@@ -1595,6 +1589,33 @@ eq('item lines: a text value prints quoted, a number does not',
 eq('premise lines: current values', premiseLines({budget_usd: {value: 50000, description: 'the most we can spend'}, ok: {value: false, description: null}}),
   ['premises:', '  budget_usd = 50000   (the most we can spend)', '  ok = false'])
 eq('premise lines: none', premiseLines({}), ['premises: none'])
+eq('premise lines: status, what set it and why', premiseLines({
+  rent: {value: 'no rise', description: 'rent', status: 'invalidated'},
+  afford: {value: false, status: 'invalidated', asserted_status: 'stated', because: 'rent', depends_on: ['rent']},
+  chain: {value: true, status: 'stated'}}), [
+  'premises:',
+  '  rent = "no rise"  [invalidated]   (rent)',
+  '  afford = false  [invalidated; set stated; because rent; rests on rent]',
+  '  chain = true'])
+eq('status changes: none prints nothing', [statusChangeLines([]), statusChangeLines(undefined)], [[], []])
+eq('status changes: premises and decisions', statusChangeLines([
+  {kind: 'premise', key: 'rent', from: 'assumed', to: 'invalidated', because: null},
+  {kind: 'decision', id: 'dec_1', from: 'decided', to: 'invalidated', because: 'afford'}]), [
+  '2 statuses changed:', '  premise rent: assumed -> invalidated', '  decision dec_1: decided -> invalidated (because afford)'])
+eq('item lines: an invalidated decision says so',
+  itemLines([{id: 'ci_8', type: 'decision', face: 'alice', model: 'jev-1', question: {instructions: 'Move?'}, answer: {result: 0.65}, status: 'invalidated', because: 'afford'}]),
+  ['ci_8   alice (jev-1) decided: Move? -> 0.65   [invalidated, because afford]'])
+
+// --- choices: the face's options, or the question it would ask ----------------
+eq('choices view: the @ is added once', [asView('alice'), asView('@alice'), asView(' head:socrates '), asView('(a | b)')], ['@alice', '@alice', '@head:socrates', '@(a | b)'])
+eq('choices lines: numbered options and usage', choicesLines({object: 'choices', view: '@alice', model: 'maestro-1',
+  choices: [{name: 'Take the offer', description: 'It pays in time.'}, {name: 'Negotiate'}], usage: {input_tokens: 1243, output_tokens: 250}}), [
+  '1. Take the offer', '   It pays in time.', '2. Negotiate', '', 'maestro-1: 1,243 input, 250 output tokens'])
+eq('choices lines: the question it would ask', choicesLines({object: 'choices.question', view: '@alice', question: 'Why?', alternatives: ['How?']}), [
+  '@alice would ask: Why?', '', 'Or:', '  - How?', '', 'Ask it with --question to get the options.'])
+eq('choices hint: a long situation goes in a state', /faces state:create[\s\S]*--state-id/.test(choicesHint(422, 'This description is 5201 tokens; version 23 reads prose of at most 3,000.', '@alice')), true)
+eq('choices hint: nothing compiled names the upload', choicesHint(409, '@alice has nothing compiled, so ...', '@alice'), 'Give it a first source: faces compile:upload alice --file <file>.')
+eq('choices hint: another 422 adds nothing', choicesHint(422, '`view` is required', '@alice'), undefined)
 eq('conversation hint: a new premise names the flag to add',
   conversationHint(new FacesAPIError(422, "premise 'rates' is new: give its `description` (what it means, in plain words)")),
   'Say what it means: --premise-description rates="what it means, in plain words"')
@@ -1616,18 +1637,25 @@ async function conversationsOverHttp() {
       const body = b ? JSON.parse(b) : undefined
       seen.push({method: req.method, url: req.url, body})
       const conv = {object: 'conversation', id: 'fs_1', model: body?.model ?? null, turns: 0, items: body?.items?.length ?? 0, causes_visible: body?.causes_visible ?? true, status: 'open'}
-      if (req.url === '/v1/conversations' && req.method === 'POST') return send(200, conv)
-      if (req.url === '/v1/conversations/gone') return send(404, {detail: 'no such conversation, or it has expired'})
-      if (req.url === '/v1/conversations/any/compact') {
+      if (req.url === '/v1/states' && req.method === 'POST') return send(200, conv)
+      if (req.url === '/v1/states/gone') return send(404, {detail: 'no such conversation, or it has expired'})
+      if (req.url === '/v1/states/any/compact') {
         if (!body?.model) return send(422, {detail: 'this conversation takes any face: name the one to compact in `model`'})
         return send(200, {object: 'cause.compaction', compaction_id: 'fcmp_1', cause: 'Position.', turns: 2})
       }
-      if (req.url === '/v1/conversations/fs_1/items' && req.method === 'POST') {
-        return send(200, {object: 'list', data: [], premises: {vendor_certified: {value: false, description: 'certified'}},
-          decisions_made_under_old_values: [{call_id: 'dec_1', question: {instructions: 'Sign?'}, choice: 'no', face: 'alice', changed: {vendor_certified: {was: true, now: false}}}]})
+      if (req.url === '/v1/states/fs_1/items' && req.method === 'POST') {
+        return send(200, {object: 'list', data: [], premises: {vendor_certified: {value: false, description: 'certified', status: 'invalidated'}},
+          decisions_made_under_old_values: [{call_id: 'dec_1', question: {instructions: 'Sign?'}, choice: 'no', face: 'alice', changed: {vendor_certified: {was: true, now: false}}}],
+          status_changes: [{kind: 'premise', key: 'vendor_certified', from: 'stated', to: 'invalidated', because: null}]})
       }
-      if (req.url === '/v1/conversations/fs_1' && req.method === 'DELETE') return send(200, {id: 'fs_1', object: 'conversation.deleted', deleted: true})
+      if (req.url === '/v1/states/fs_1' && req.method === 'DELETE') return send(200, {id: 'fs_1', object: 'conversation.deleted', deleted: true})
       if (req.url === '/v1/causes') return send(200, {cause: 'Because.'})
+      if (req.url === '/v1/choices') {
+        if (body?.view === '@bare') return send(409, {detail: '@bare has nothing compiled, so version 23 has nothing to propose from. Compile a source for it. Nothing was charged.'})
+        if (!body?.instructions) return send(200, {object: 'choices.question', view: body?.view, model: body?.model, question: 'Why?', alternatives: [], usage: {input_tokens: 5, output_tokens: 2}})
+        return send(200, {object: 'choices', view: body?.view, model: body?.model, choices: [{name: 'Go', description: 'Now.'}], usage: {input_tokens: 5, output_tokens: 2}})
+      }
+      if (req.url === '/v1/systemone') return send(200, {model: 'alice@jev-1', answers: {move: {probability: 0.6}}, cause: 'c', causes: {move: 'c'}, decision_ids: {move: 'dec_9'}})
       if (req.url.startsWith('/v1/models')) return send(200, {data: []})
       if (req.url === '/v1/chat/completions') return send(200, {object: 'chat.completion', choices: [{message: {content: 'ok'}}]})
       send(404, {detail: 'not here'})
@@ -1643,16 +1671,16 @@ async function conversationsOverHttp() {
   const last = (url) => seen.filter((s) => s.url === url).at(-1)?.body
   try {
     let r = await run(['conversation:create'])
-    eq('conversation:create: no face, causes visible, no items', last('/v1/conversations'), {causes_visible: true})
+    eq('conversation:create: no face, causes visible, no items', last('/v1/states'), {causes_visible: true})
     eq('conversation:create: any face reads as such', /face:\s+any of your faces/.test(r.out), true)
     await run(['conversation:create', 'alice', '--no-causes-visible', '-m', 'hi', '--premise', 'a=1', '--premise-description', 'a=the budget'])
-    eq('conversation:create: face, causes hidden, premises then messages', last('/v1/conversations'),
+    eq('conversation:create: face, causes hidden, premises then messages', last('/v1/states'),
       {causes_visible: false, model: 'alice', items: [{key: 'a', value: 1, description: 'the budget'}, {type: 'message', role: 'user', content: 'hi'}]})
     seen.length = 0
     r = await run(['conversation:create', 'alice@gpt-x'])
     eq('conversation:create: a model is refused before sending', [r.code, /face alone: alice/.test(r.out), seen.length], [2, true, 0])
     r = await run(['conversation:add', 'fs_1', '--premise', 'vendor_certified=false'])
-    eq('conversation:add: sent as items', last('/v1/conversations/fs_1/items'), {items: [{key: 'vendor_certified', value: false}]})
+    eq('conversation:add: sent as items', last('/v1/states/fs_1/items'), {items: [{key: 'vendor_certified', value: false}]})
     eq('conversation:add: decisions under old values, readably',
       [/1 earlier decision was made under a value you just changed/.test(r.out), /alice: Sign\? -> no/.test(r.out), /vendor_certified: was true, now false/.test(r.out)], [true, true, true])
     seen.length = 0
@@ -1661,11 +1689,11 @@ async function conversationsOverHttp() {
     r = await run(['conversation:add', 'fs_1', ...Array.from({length: 21}, (_, i) => ['-m', `m${i}`]).flat()])
     eq('conversation:add: more than 20 is refused before sending', [r.code, /At most 20/.test(r.out), seen.length], [2, true, 0])
     r = await run(['conversation:get', 'gone'])
-    eq('conversation:get: 404 says how to start another', /faces conversation:create/.test(r.out), true)
+    eq('conversation:get: 404 says how to start another', /faces state:create/.test(r.out), true)
     r = await run(['conversation:compact', 'any'])
-    eq('conversation:compact: any-face 422 says to name the face', /faces conversation:compact any <face>/.test(r.out), true)
+    eq('conversation:compact: any-face 422 says to name the face', /faces state:compact any <face>/.test(r.out), true)
     await run(['conversation:compact', 'any', 'alice'])
-    eq('conversation:compact: the face is sent', last('/v1/conversations/any/compact'), {model: 'alice'})
+    eq('conversation:compact: the face is sent', last('/v1/states/any/compact'), {model: 'alice'})
     r = await run(['conversation:close', 'fs_1', '--yes', '--json'])
     eq('conversation:close: the server\'s answer', JSON.parse(r.out).deleted, true)
 
@@ -1676,18 +1704,35 @@ async function conversationsOverHttp() {
     eq('causes: --session still sent as session', last('/v1/causes'), {model: 'alice', messages: [{role: 'user', content: 'Now?'}], session: 'fs_1', causes_visible: false})
     seen.length = 0
     r = await run(['causes', 'alice', '-m', 'Now?', '--premise', 'a=1'])
-    eq('causes: premises without a conversation are refused before sending', [r.code, /belong to a conversation/.test(r.out), seen.length], [2, true, 0])
+    eq('causes: premises without a conversation are refused before sending', [r.code, /belong to a state/.test(r.out), seen.length], [2, true, 0])
 
-    await run(['chat:chat', 'alice@gpt-x', '-m', 'one', '--json'])
-    let t = await run(['chat:thread', 'alice@gpt-x', '-m', 'first', '--json'])
-    const tid = JSON.parse(t.out).thread_id
-    await run(['chat:thread', '--id', tid, '-m', 'second', '--json'])
-    eq('thread: without a conversation, the whole thread is sent', last('/v1/chat/completions').messages.map((m) => m.content), ['first', 'ok', 'second'])
-    await run(['chat:thread', '--id', tid, '-m', 'third', '--conversation', 'fs_1', '--premise', 'a=2', '--json'])
-    const sent = last('/v1/chat/completions')
-    eq('thread: in a conversation, only the new message', [sent.messages.map((m) => m.content), sent.conversation, sent.premises], [['third'], 'fs_1', [{key: 'a', value: 2}]])
-    await run(['chat:chat', 'alice@gpt-x', '-m', 'one', '--conversation', 'fs_1', '--no-causes-visible', '--json'])
-    eq('chat:chat: conversation and causes_visible sent', [last('/v1/chat/completions').conversation, last('/v1/chat/completions').causes_visible], ['fs_1', false])
+    r = await run(['state:add', 'fs_1', '--premise', 'vendor_certified=false', '--premise-status', 'vendor_certified=invalidated'])
+    eq('state:add: status sent with the premise', last('/v1/states/fs_1/items'), {items: [{key: 'vendor_certified', value: false, status: 'invalidated'}]})
+    eq('state:add: status changes printed', /1 status changed:\n\s+premise vendor_certified: stated -> invalidated/.test(r.out), true)
+    r = await run(['state:create', 'alice'])
+    eq('state:create: the next step is choices', /faces choices alice --state-id fs_1/.test(r.out), true)
+
+    await run(['choices', 'alice', '--state', 'A chain opened.', '-q', 'What now?', '--max-choices', '3'])
+    eq('choices: view, model, state, question and max sent', last('/v1/choices'), {view: '@alice', model: 'maestro-1', state: 'A chain opened.', instructions: 'What now?', max_choices: 3})
+    r = await run(['choices', '@alice', '--state-id', 'fs_1', '--model', 'maestro-1-flash'])
+    eq('choices: a state id alone, flash, no question', last('/v1/choices'), {view: '@alice', model: 'maestro-1-flash', state_id: 'fs_1'})
+    eq('choices: the question it would ask is printed', /@alice would ask: Why\?/.test(r.out), true)
+    seen.length = 0
+    r = await run(['choices', 'alice'])
+    eq('choices: no situation is refused before sending', [r.code, /Describe the situation/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['choices', 'alice@gpt-x', '--state', 'x'])
+    eq('choices: a model after the face is refused before sending', [r.code, /Name the face alone/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['choices', 'alice', '--state', 'x', '--model', 'gpt-x'])
+    eq('choices: an unknown model is refused before sending', [r.code !== 0, seen.length], [true, 0])
+    r = await run(['choices', 'bare', '--state', 'x', '-q', 'y'])
+    eq('choices: 409 names the upload', /HTTP 409[\s\S]*faces compile:upload bare --file/.test(r.out), true)
+
+    r = await run(['decide', 'alice', '--state', 'Lease.', '--question', 'Move?', '--conversation', 'fs_1', '--depends-on', 'afford, dec_1'])
+    eq('decide: depends_on sent in a state', last('/v1/systemone').depends_on, ['afford', 'dec_1'])
+    eq('decide: decision ids printed', /decision id \(move\): dec_9/.test(r.out), true)
+    seen.length = 0
+    r = await run(['decide', 'alice', '--state', 'Lease.', '--question', 'Move?', '--depends-on', 'afford'])
+    eq('decide: depends_on without a state is refused before sending', [r.code, /belongs to a state/.test(r.out), seen.filter((x) => x.url === '/v1/systemone').length], [2, true, 0])
   } finally {
     srv.close()
     fs.rmSync(home, {recursive: true, force: true})

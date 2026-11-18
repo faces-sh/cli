@@ -25,7 +25,9 @@ export default class Choices extends BaseCommand {
     state: Flags.string({description: 'The situation, as prose: at most 3,000 tokens.', exclusive: ['state-file']}),
     'state-file': Flags.string({description: 'Read the situation from this file.', exclusive: ['state']}),
     'state-id': Flags.string({
-      description: 'A state (from faces state:create) as the situation. With --state, the prose is read as an addendum to it.',
+      description:
+        'A state (from faces state:create) as the situation. With --state, the prose is an addendum for this call only: ' +
+        'read with the state, never saved to it. Write anything that should persist with faces state:add --premise.',
     }),
     model: Flags.string({description: 'The choices model. maestro-1-flash answers sooner and costs 10 times more when a question is asked.', options: [...CHOICES_MODELS], default: CHOICES_MODELS[0]}),
     'max-choices': Flags.integer({description: `The most options to return, 1 to ${MAX_CHOICES}. Default 8.`, min: 1, max: MAX_CHOICES}),

@@ -122,6 +122,10 @@ faces choices head:socrates --state-id fs_STATE_ID --question "What should the s
 faces choices "(alice | bob)" --state-file situation.txt -q "What next?" --model maestro-1-flash
 ```
 
+With both `--state-id` and `--state`, the prose is an addendum for that one call: read with the
+state, never saved to it. Anything that should persist goes in the state as premises, with
+`faces state:add --premise`.
+
 The face proposes the options it would weigh, strongest first. Leave `--question` out and it
 proposes the question it would ask. `--model` is `maestro-1` (the default) or `maestro-1-flash`,
 which answers sooner and costs 10 times more when a question is asked. Prices:

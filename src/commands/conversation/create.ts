@@ -6,7 +6,9 @@ import {
   Conversation,
   MAX_CONVERSATION_ITEMS,
   PREMISE_DESCRIPTION_FLAG_DESCRIPTION,
+  PREMISE_DEPENDS_ON_FLAG_DESCRIPTION,
   PREMISE_FLAG_DESCRIPTION,
+  PREMISE_STATUS_FLAG_DESCRIPTION,
   clientItems,
   conversationHint,
   conversationLines,
@@ -15,11 +17,11 @@ import {
 
 export default class ConversationCreate extends BaseCommand {
   static description =
-    'Start a conversation. The server keeps the whole conversation: your messages, each face\'s reply with ' +
-    'its cause, decisions, and premises (named facts you declare). Pass its id with --conversation on chat, ' +
-    'causes or decide and send only what is new. Name a face and the conversation takes that face only; ' +
-    'leave it out and it takes any of your faces. Opening one is free; each turn costs what it costs ' +
-    'without one. A conversation expires 30 days after it was last used.'
+    'Start a state (formerly a conversation). The server keeps the situation your agent builds: premises ' +
+    '(named facts, each with a status and what it depends on), the decisions faces made, and your messages. ' +
+    'Ask a face about it with faces choices --state-id, or pass its id with --conversation on decide or causes ' +
+    'and send only what is new. Name a face and the state takes that face only; leave it out and it takes any ' +
+    'of your faces. Opening one is free. A state expires 30 days after it was last used.'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> alice',
@@ -33,20 +35,22 @@ export default class ConversationCreate extends BaseCommand {
     'causes-visible': Flags.boolean({
       description:
         'Whether each face reads the other faces\' causes. On by default; --no-causes-visible keeps each ' +
-        'face to its own. Matters only in a conversation with several faces.',
+        'face to its own. Matters only in a state with several faces.',
       default: true,
       allowNo: true,
     }),
     message: Flags.string({char: 'm', description: 'A first message of yours (repeatable, kept in order).', multiple: true}),
     premise: Flags.string({description: PREMISE_FLAG_DESCRIPTION, multiple: true}),
     'premise-description': Flags.string({description: PREMISE_DESCRIPTION_FLAG_DESCRIPTION, multiple: true}),
+    'premise-status': Flags.string({description: PREMISE_STATUS_FLAG_DESCRIPTION, multiple: true}),
+    'premise-depends-on': Flags.string({description: PREMISE_DEPENDS_ON_FLAG_DESCRIPTION, multiple: true}),
   }
 
   static args = {
     face: Args.string({
       description:
         'The face alone: an alias, owner:alias, or a composite such as "(a | b)". No @model. Leave it out ' +
-        'for a conversation that takes any of your faces.',
+        'for a state that takes any of your faces.',
       required: false,
     }),
   }
@@ -55,16 +59,16 @@ export default class ConversationCreate extends BaseCommand {
     const {args, flags} = await this.parse(ConversationCreate)
     const client = this.makeClient(flags)
     const face = args.face?.trim()
-    if (face?.includes('@')) this.error(`A conversation is with a face alone: ${face.slice(0, face.lastIndexOf('@'))}`)
+    if (face?.includes('@')) this.error(`A state is with a face alone: ${face.slice(0, face.lastIndexOf('@'))}`)
 
     let items: Array<Record<string, unknown>>
     try {
-      items = clientItems(flags.message, parsePremises(flags.premise, flags['premise-description']))
+      items = clientItems(flags.message, parsePremises(flags.premise, flags['premise-description'], flags['premise-status'], flags['premise-depends-on']))
     } catch (err) {
       this.error(err instanceof Error ? err.message : String(err))
     }
     if (items.length > MAX_CONVERSATION_ITEMS) {
-      this.error(`At most ${MAX_CONVERSATION_ITEMS} messages and premises at a time (got ${items.length}). Add the rest with faces conversation:add.`)
+      this.error(`At most ${MAX_CONVERSATION_ITEMS} messages and premises at a time (got ${items.length}). Add the rest with faces state:add.`)
     }
 
     const body: Record<string, unknown> = {causes_visible: flags['causes-visible']}
@@ -84,7 +88,7 @@ export default class ConversationCreate extends BaseCommand {
 
     if (!this.jsonEnabled()) {
       for (const line of conversationLines(data)) this.log(line)
-      if (data.id) this.log(`\nTake a turn with: faces chat:chat ${face ?? '<face>'}@<model> --conversation ${data.id} -m "..."`)
+      if (data.id) this.log(`\nAsk a face about it with: faces choices ${face ?? '<face>'} --state-id ${data.id} --question "..."`)
     }
     return data
   }

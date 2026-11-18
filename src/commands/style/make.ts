@@ -139,13 +139,8 @@ export default class StyleMake extends BaseCommand {
     if (json) return {...publicJob(final), sources, skipped}
     for (const line of formatBuildReport(final)) this.log(line)
     this.log('')
-    // Building a style does not apply it. The face still answers in its
-    // ordinary voice; --style is how a caller asks for the style.
-    const medium = jobMedium(final)?.split(', ')[0]
-    const style = !medium ? '<medium>' : medium.includes(' ') ? `"${medium}"` : medium
-    this.log(`'${args.alias}' has built a style. Use it with --style and the medium:`)
-    this.log(`  faces chat:chat ${args.alias} --style ${style} -m "..."`)
-    this.log(`Without --style, no built style is applied.`)
+    // A style was applied on chat, which is retired: nothing applies one now.
+    this.log(`'${args.alias}' has built a style. It is kept on the face; no route applies a style since chat was retired.`)
     this.log(`Go back to the previous style: faces style:revert ${args.alias} --yes`)
     return final
   }

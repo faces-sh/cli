@@ -84,7 +84,7 @@ export default class FaceGet extends BaseCommand {
             this.error(
               `Could not find '${args.face_id}' in the face listing.\n` +
                 'A published face can be reachable before it appears there, so this may not mean it does ' +
-                `not exist. If you know the handle, try it directly: faces chat:chat ${args.face_id}@<model>`,
+                `not exist. If you know the handle, try it directly: faces choices ${args.face_id} --state "..."`,
             )
           }
           if (isMeAlias(args.face_id)) this.error(ME_MISSING)

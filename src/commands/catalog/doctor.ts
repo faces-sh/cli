@@ -4,10 +4,9 @@ import {Flags} from '@oclif/core'
 import {BaseCommand} from '../../base.js'
 import {FacesAPIError} from '../../client.js'
 import {loadConfig} from '../../config.js'
-import {unquoteYaml, seg, postChat} from '../../utils.js'
+import {unquoteYaml, seg} from '../../utils.js'
 import {CatalogService, CATALOG_DIR, type FaceFrontmatter, type FaceDataInput} from '../../catalog.js'
 import {GroupCatalogService, GROUPS_DIR, slugifyGroupName} from '../../group-catalog.js'
-import {resolveEndpoint, MESSAGES_ENDPOINT, RESPONSES_ENDPOINT} from '../../routing.js'
 
 interface FaceObject extends FaceDataInput {
   uid: string
@@ -15,32 +14,27 @@ interface FaceObject extends FaceDataInput {
 
 export default class CatalogDoctor extends BaseCommand {
   static description =
-    'Diagnose and repair the local face and group catalog. --generate bills, so it needs --allow-paid.'
+    'Diagnose and repair the local face and group catalog.'
 
   static flags = {
     ...BaseCommand.baseFlags,
     fix: Flags.boolean({description: 'Rebuild missing or stale catalog entries from API', default: false}),
     generate: Flags.boolean({
-      description:
-        'Fix, then write a description for each face that has none by asking the face. This bills: each one ' +
-        'is a chat on gpt-5-nano (or the catalog_model you set), charged to credits. Needs --allow-paid.',
+      description: 'Retired: descriptions were written by chatting with each face, and chat is retired. Write one with faces face:edit <alias> --description.',
       default: false,
+      hidden: true,
     }),
-    'allow-paid': Flags.boolean({
-      description:
-        'Permit the charge for --generate. Without this flag --generate sends nothing and nothing is charged.',
-      default: false,
-    }),
+    'allow-paid': Flags.boolean({description: 'Retired with --generate.', default: false, hidden: true}),
   }
 
   async run(): Promise<unknown> {
     const {flags} = await this.parse(CatalogDoctor)
     // Refuse before any request, so nobody is charged who did not mean to be.
-    if (flags.generate && !flags['allow-paid']) {
+    if (flags.generate) {
       this.error(
-        'Generating descriptions bills your account: each one is a chat with the face, charged to credits. ' +
-          'Re-run with --allow-paid if you meant to pay.\n' +
-          'To repair the catalog without generating anything, which is free: faces catalog:doctor --fix',
+        '--generate wrote descriptions by chatting with each face, and chat is retired. Nothing was sent.\n' +
+          'Write a description with: faces face:edit <alias> --description "..."\n' +
+          'To repair the catalog, which is free: faces catalog:doctor --fix',
       )
     }
 
@@ -284,61 +278,6 @@ export default class CatalogDoctor extends BaseCommand {
       this.log('Could not reach the groups API, so local groups were not checked against the server.')
     }
 
-    // Generate mode: create missing descriptions
-    if (flags.generate && noDescription.length > 0) {
-      const cfg = loadConfig()
-      const catalogModel = cfg.catalog_model ?? 'gpt-5-nano'
-
-      this.log(`Generating descriptions for ${noDescription.length} face(s) via ${catalogModel}...`)
-
-      // Route the description LLM the same way chat does: off the catalog.
-      const {endpoint: descEndpoint} = await resolveEndpoint(client, `_@${catalogModel}`)
-
-      let generated = 0
-      for (const alias of noDescription) {
-        const remote = remoteByAlias.get(alias)
-        if (!remote) continue
-
-        try {
-          const prompt = 'Describe yourself in one paragraph. Who are you, what do you care about, and what kind of questions are you best suited to answer?'
-          const faceModel = `${alias}@${catalogModel}`
-
-          let text: string | undefined
-          if (descEndpoint === MESSAGES_ENDPOINT) {
-            const resp = (await postChat(client, '/v1/messages', {model: faceModel, messages: [{role: 'user', content: prompt}], max_tokens: 256})).data as {content?: Array<{type: string; text: string}>}
-            text = resp.content?.find((b) => b.type === 'text')?.text
-          } else if (descEndpoint === RESPONSES_ENDPOINT) {
-            const resp = (await postChat(client, '/v1/responses', {model: faceModel, input: [{role: 'user', content: prompt}], max_output_tokens: 256})).data as {output?: Array<{content?: Array<{type: string; text: string}>}>}
-            let out = ''
-            for (const item of resp.output ?? []) {
-              for (const block of item.content ?? []) {
-                if (block.type === 'output_text') out += block.text ?? ''
-              }
-            }
-            text = out || undefined
-          } else {
-            const resp = (await postChat(client, '/v1/chat/completions', {model: faceModel, messages: [{role: 'user', content: prompt}], max_tokens: 256})).data as {choices?: Array<{message: {content: string}}>}
-            text = resp.choices?.[0]?.message?.content
-          }
-          if (text) {
-            const desc = text.trim()
-            catalog.writeFace({...remote, description: desc})
-            try {
-              await client.patch(`/v1/faces/${seg(alias)}`, {body: {description: desc}})
-            } catch { /* non-fatal */ }
-            generated++
-            this.log(`  ${alias}: done`)
-          } else {
-            this.log(`  ${alias}: no response`)
-          }
-        } catch (err) {
-          const msg = err instanceof FacesAPIError ? `HTTP ${err.statusCode}: ${err.message}` : String(err)
-          this.log(`  ${alias}: failed: ${msg}`)
-        }
-      }
-
-      this.log(`Generated ${generated} description(s).`)
-    }
 
     catalog.rebuildIndex()
     return {

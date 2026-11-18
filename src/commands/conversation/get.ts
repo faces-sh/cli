@@ -6,17 +6,17 @@ import {seg} from '../../utils.js'
 
 export default class ConversationGet extends BaseCommand {
   static description =
-    'Read a conversation: its face (or any), status, how many turns and items it holds, whether faces ' +
-    'read each other\'s causes, and when it expires. Free. See its items with faces conversation:items.'
+    'Read a state: its face (or any), status, how many turns and items it holds, whether faces ' +
+    'read each other\'s causes, and when it expires. Free. See its items with faces state:items.'
 
-  static examples = ['<%= config.bin %> <%= command.id %> fs_CONVERSATION_ID']
+  static examples = ['<%= config.bin %> <%= command.id %> fs_STATE_ID']
 
   static flags = {
     ...BaseCommand.baseFlags,
   }
 
   static args = {
-    conversation_id: Args.string({description: 'Conversation id (from conversation:create)', required: true}),
+    conversation_id: Args.string({description: 'State id (from state:create)', required: true}),
   }
 
   async run(): Promise<unknown> {

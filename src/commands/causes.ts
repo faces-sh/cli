@@ -14,7 +14,7 @@ export default class Causes extends BaseCommand {
     'Get a face\'s cause alone, with no answering model: the principal why behind its response in this ' +
     'context (POST /v1/causes). Send a conversation with -m, or a situation with --state, optionally with ' +
     'questions for one cause per question. Billed at the cause rate only (see faces models:list --kind cause). ' +
-    'A cause takes about 10 seconds. To have a model answer, use chat:chat or decide.'
+    'A cause takes about 10 seconds. For the options a face would weigh, use choices; for typed answers, decide.'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> alice -m "Should I take the offer?"',
@@ -75,7 +75,7 @@ export default class Causes extends BaseCommand {
     const face = args.face.trim()
 
     if (face.includes('@')) {
-      this.error(`A cause is the face's alone, so leave the model off: ${face.slice(0, face.lastIndexOf('@'))}\nTo have a model answer, use faces chat:chat.`)
+      this.error(`A cause is the face's alone, so leave the model off: ${face.slice(0, face.lastIndexOf('@'))}\nFor the options a face would weigh, use faces choices.`)
     }
 
     const fail = (m: string): never => this.error(m)

@@ -6,12 +6,12 @@ import {seg} from '../../utils.js'
 
 export default class ConversationItems extends BaseCommand {
   static description =
-    'List a conversation\'s items in order: your messages, each face\'s reply with its cause, decisions ' +
-    'with their choice and cause, and premises. Ends with the premises in force now. Free.'
+    'List a state\'s items in order: premises, decisions with their choice, cause and status, your messages ' +
+    'and each face\'s reply. Ends with the premises in force now, each with its status. Free.'
 
   static examples = [
-    '<%= config.bin %> <%= command.id %> fs_CONVERSATION_ID',
-    '<%= config.bin %> <%= command.id %> fs_CONVERSATION_ID --json',
+    '<%= config.bin %> <%= command.id %> fs_STATE_ID',
+    '<%= config.bin %> <%= command.id %> fs_STATE_ID --json',
   ]
 
   static flags = {
@@ -19,7 +19,7 @@ export default class ConversationItems extends BaseCommand {
   }
 
   static args = {
-    conversation_id: Args.string({description: 'Conversation id (from conversation:create)', required: true}),
+    conversation_id: Args.string({description: 'State id (from state:create)', required: true}),
   }
 
   async run(): Promise<unknown> {

@@ -1345,17 +1345,21 @@ async function fidelityFlow() {
   const env = {...process.env, HOME: home, FACES_BASE_URL: `http://127.0.0.1:${srv.address().port}`, FACES_TOKEN: 'jwt-check'}
   const run = (args) => new Promise((r) => execFile(process.execPath, ['bin/run.js', ...args], {env}, (err, stdout, stderr) => r({code: err?.code ?? 0, out: stdout + stderr})))
   try {
-    for (const gone of ['fidelity:start', 'fidelity:turn', 'fidelity:run', 'causes']) {
-      const g = await run([gone, 'ana'])
-      eq(`${gone} is retired`, [g.code !== 0, /not found/i.test(g.out)], [true, true])
-    }
-    turns.push({n: 1, message: 'hello', answers: {a: 'A-text', b: 'B-text'}})
-    let r
+    const g = await run(['causes', 'ana'])
+    eq('causes is removed', [g.code !== 0, /not found/i.test(g.out)], [true, true])
+    let r = await run(['fidelity:start', 'ana'])
+    eq('fidelity:start names the next step', /run:\s+r1[\s\S]*fidelity:turn r1 -m/.test(r.out), true)
+    r = await run(['fidelity:start', 'bare'])
+    eq('fidelity:start: nothing compiled gets a hint', /Add a source with: faces compile:upload bare --file/.test(r.out), true)
+    r = await run(['fidelity:turn', 'r1', '-m', 'slow'])
+    eq('fidelity:turn: a held refusal is an error', [r.code, /HTTP 502: the face could not answer/.test(r.out)], [2, true])
+    r = await run(['fidelity:turn', 'r1', '-m', 'hello'])
+    eq('fidelity:turn prints both answers', /a:\nA-text\n\nb:\nB-text/.test(r.out), true)
     r = await run(['fidelity:pick', 'r1', 'a'])
     eq('fidelity:pick finds the open turn', bodies.some((x) => x.startsWith('POST /v1/fidelity/r1/turns/1/choice {"pick":"a"}')), true)
     r = await run(['fidelity:pick', 'r1', 'b'])
-    eq('fidelity:pick with no answers says turns are retired', /Turn 2 has no answers to pick from, and new turns are retired/.test(r.out), true)
-    turns.push({n: 2, message: 'again', answers: {a: 'A-text', b: 'B-text'}})
+    eq('fidelity:pick before a message says so', /Turn 2 has no answers to pick from yet/.test(r.out), true)
+    await run(['fidelity:turn', 'r1', '-m', 'again'])
     r = await run(['fidelity:pick', 'r1', 'b', '--correction', 'what I would say'])
     eq('fidelity:pick sends the correction', bodies.some((x) => x.includes('/turns/2/choice {"pick":"b","correction":"what I would say"}')), true)
     eq('fidelity:pick: the final score', /Finished\. Fidelity: 1\.7 out of 10/.test(r.out), true)
@@ -1363,6 +1367,8 @@ async function fidelityFlow() {
     eq('fidelity:get reveals the face once done', /turn 1: picked a, the face, accepted, scored 1\n\s+turn 2: picked b, the competitor, corrected, scored 0\.7/.test(r.out), true)
     r = await run(['fidelity:save-thread', 'r1'])
     eq('fidelity:save-thread names the compile', /Saved as thread t9\nCompile it into the face: faces compile:thread:make t9/.test(r.out), true)
+    r = await run(['fidelity:run', 'ana'])
+    eq('fidelity:run needs a terminal', /needs a person at a terminal/.test(r.out), true)
   } finally {
     srv.close()
     fs.rmSync(home, {recursive: true, force: true})

@@ -70,7 +70,7 @@ export function nextStep(run: FidelityRun): string | undefined {
   }
   return run.next.awaiting === 'choice'
     ? `Pick the answer that sounds more like the person: faces fidelity:pick ${id} a|b [--correction "..."]`
-    : `Turn ${run.next.turn} waits for a message, and new turns are retired.`
+    : `Send turn ${run.next.turn}'s message: faces fidelity:turn ${id} -m "..."`
 }
 
 /** The run's state in labelled lines, without the turns' texts. */
@@ -129,7 +129,7 @@ export function fidelityHint(err: FacesAPIError, on: {run?: string; alias?: stri
     case 'fidelity_choice_pending':
       return `Pick one first: faces fidelity:pick ${id} a|b`
     case 'fidelity_run_finished':
-      return `Read the score: faces fidelity:get ${id}.`
+      return `Read the score: faces fidelity:get ${id}. Start another with faces fidelity:start ${on.alias ?? '<alias>'}.`
     case 'fidelity_run_open':
       return `See where it stands: faces fidelity:get ${id}`
     case 'fidelity_unknown_model':
@@ -137,7 +137,7 @@ export function fidelityHint(err: FacesAPIError, on: {run?: string; alias?: stri
     case 'fidelity_nothing_compiled':
       return `Add a source with: faces compile:upload ${on.alias ?? '<alias>'} --file <file>`
     case 'fidelity_run_not_found':
-      return 'Check the run id.'
+      return 'Run ids are printed by faces fidelity:start.'
     default:
       return undefined
   }

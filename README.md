@@ -72,7 +72,7 @@ faces style:upload / make / status / versions / revert / delete
 
 faces models:list                 # the models you can name; --kind takes a list, or all
 faces benchmark:start / get / list
-faces fidelity:get / pick / save-thread   # read runs made before; starting one is retired
+faces fidelity:start / turn / pick / get / run / save-thread
 
 faces group:create / list / get / edit / delete / members / add / remove
 faces group:tag:add / list / remove / set

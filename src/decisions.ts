@@ -237,38 +237,6 @@ export function warmUpWait(status: number, retryAfter: number | undefined, waite
   return retryAfter
 }
 
-/** What `/v1/systemone` answers with, as far as the face's cause goes. */
-export interface DecisionCauses {
-  /** The face's cause: the first question's, or the whole of it for a face asked alone. */
-  cause?: string
-  /** One per question, keyed by question id, each read from the situation with that question in mind. */
-  causes?: Record<string, unknown>
-}
-
-/**
- * The face's cause as lines, per question when the questions were asked
- * about apart.
- *
- * With several questions each has its own cause, and a question missing from
- * `causes` falls back to `cause`. When every one is the same text, as with a
- * single question, it is printed once rather than repeated under each id.
- */
-export function causeLines(data: DecisionCauses, questionIds: string[]): string[] {
-  const cause = typeof data.cause === 'string' ? data.cause : ''
-  const per = questionIds.map((id) => {
-    const c = data.causes?.[id]
-    return [id, typeof c === 'string' && c !== '' ? c : cause] as const
-  })
-  if (per.length === 0 || per.every(([, c]) => c === cause)) return cause ? [cause] : []
-  const lines: string[] = []
-  for (const [id, c] of per) {
-    if (!c) continue
-    if (lines.length > 0) lines.push('')
-    lines.push(`${id}:`, c)
-  }
-  return lines
-}
-
 /**
  * The refusal inside a held response, or undefined when the body is an answer.
  *

@@ -2,7 +2,7 @@
  * Shared helpers for the `style` command family.
  *
  * A style is built from a face's own writing, one per medium, and applied on
- * chat with `style`. It is a separate act from `compile`.
+ * chat when a request is in that medium. It is a separate act from `compile`.
  *
  * The API names a source by a triple: id, medium, source_type. Users should
  * only ever have to give an id, so everything here exists to turn one into the

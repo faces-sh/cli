@@ -22,9 +22,9 @@ export function planName(plan: unknown): string {
 
 /** What each allowance counts, in the order a meter shows them. */
 const ALLOWANCES: Array<[string, string]> = [
-  ['cause_5h', 'causes, rolling 5 hours'],
-  ['cause_week', 'causes, this week'],
-  ['cause_month', 'causes, this month'],
+  ['cause_5h', 'choices and steering, rolling 5 hours'],
+  ['cause_week', 'choices and steering, this week'],
+  ['cause_month', 'choices and steering, this month'],
   ['compile_month', 'compile, this month'],
 ]
 
@@ -68,10 +68,9 @@ function when(ts: unknown): string | undefined {
  * The plan's allowances as a meter, one line each, or [] when there is none
  * to show: Free pays as it goes, so its `allowances` is null.
  *
- * A face's cause, in chat and decisions, is counted in the
- * input tokens it read plus `cause_added_tokens` a turn, with no floor; compile
- * in source tokens each time a source is compiled. The answering model is never part of
- * it. A limit of -1 is unlimited. The 5
+ * Choices and the steering on chat and decisions are counted in the input
+ * tokens they process; compile in source tokens each time a source is
+ * compiled. The downstream model is never part of it. A limit of -1 is unlimited. The 5
  * hour window rolls, so it has no reset.
  */
 export function allowanceLines(sub: Record<string, unknown>): string[] {
@@ -117,17 +116,12 @@ export function allowanceLines(sub: Record<string, unknown>): string[] {
   if (!unlimited) {
     const rates = sub.rates as Record<string, unknown> | undefined
     let past = 'Past an allowance, api_fallback on pays from your credits; off refuses with a 429 until it resets.'
-    if (rates && typeof rates.cause_usd_per_million_input_tokens === 'number' && typeof rates.compile_usd_per_million_source_tokens === 'number') {
-      // Say what a cause token is, or the rate reads as cheaper than it
-      // is: each cause counts its input tokens plus a fixed number on top.
-      const added = typeof rates.cause_added_tokens === 'number' && rates.cause_added_tokens > 0
-        ? `, each cause counting its input tokens plus ${rates.cause_added_tokens.toLocaleString('en-US')},`
-        : ''
+    if (rates && typeof rates.compile_usd_per_million_source_tokens === 'number') {
       const rush = typeof rates.compile_rush_usd_per_million_source_tokens === 'number'
         ? ` ($${rates.compile_rush_usd_per_million_source_tokens} for a rush)`
         : ''
       past +=
-        ` Credits pay $${rates.cause_usd_per_million_input_tokens} per million cause tokens${added} and ` +
+        ' Credits pay the maestro rates (faces models:list --kind upstream) and ' +
         `$${rates.compile_usd_per_million_source_tokens} per million compile tokens${rush}.`
     }
     lines.push(`  ${past}`)

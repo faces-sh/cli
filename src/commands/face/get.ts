@@ -35,7 +35,7 @@ interface FaceObject {
 export default class FaceGet extends BaseCommand {
   static description =
     'Get details for a face, by alias or owner:alias. A published or shared face is reachable under the ' +
-    'same owner:alias address chat uses; it is shown with a note that you do not own it.'
+    'owner:alias address (in a model it is written @owner~alias); it is shown with a note that you do not own it.'
 
   static flags = {
     ...BaseCommand.baseFlags,

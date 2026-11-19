@@ -5,7 +5,7 @@ import {allowanceLines, planName} from '../../../billing.js'
 export default class BillingSubscription extends BaseCommand {
   static description =
     'Show your plan (free, connect or pro), renewal date, and on a paid plan how much of each ' +
-    'allowance is used: causes over 5 hours, the week and the month, and compiling over the month'
+    'allowance is used: choices and steering over 5 hours, the week and the month, and compiling over the month'
 
   static flags = {
     ...BaseCommand.baseFlags,

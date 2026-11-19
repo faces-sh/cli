@@ -3,9 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import {FacesClient} from './client.js'
-import {CATALOG_INDEX} from './catalog.js'
 import {DECISION_MODELS} from './decisions.js'
-import {seg} from './utils.js'
 
 export const MESSAGES_ENDPOINT = '/v1/messages'
 export const RESPONSES_ENDPOINT = '/v1/responses'
@@ -113,78 +111,27 @@ function buildMap(models: RawModel[]): Map<string, {endpoint: string; freeWhenCo
   return map
 }
 
-/** Read a face's default_model from the local catalog index without a network call. */
-function defaultModelFromCatalog(alias: string): string | undefined {
-  try {
-    const entries = JSON.parse(fs.readFileSync(CATALOG_INDEX, 'utf8')) as Array<{alias?: string; default_model?: string}>
-    const hit = entries.find((e) => e.alias === alias)
-    return hit?.default_model || undefined
-  } catch {
-    return undefined
-  }
-}
-
 /** The message for a chat aimed at a decision model, or undefined when `llm` is not one. */
 export function decisionModelError(llm?: string): string | undefined {
   if (!llm) return undefined
   const want = llm.toLowerCase()
   if (!(DECISION_MODELS as readonly string[]).includes(want)) return undefined
-  return `${llm} is a decision model, not a chat model; use \`faces decide\``
-}
-
-/** Split `alias@llm` → llm; bare `alias` → undefined. */
-export function llmFromArg(modelArg: string): string | undefined {
-  const i = modelArg.lastIndexOf('@')
-  return i >= 0 ? modelArg.slice(i + 1) : undefined
-}
-
-/** The face-spec (everything left of the trailing `@model`), e.g. `(a | b)@x` → `(a | b)`. */
-export function faceSpecOf(modelArg: string): string {
-  const i = modelArg.lastIndexOf('@')
-  return i >= 0 ? modelArg.slice(0, i) : modelArg
-}
-
-/**
- * True when a model arg's face-spec is a run-time composite formula, i.e. it
- * contains a set operator (`| & ^`), grouping parens, or a space-delimited `-`
- * difference. None of these characters are legal in an alias (`^[a-z0-9-]+$`) or
- * in `owner:alias`, so detection is unambiguous. Mirrors the backend's check.
- */
-export function isCompositeFormula(modelArg: string): boolean {
-  const spec = faceSpecOf(modelArg).trim()
-  return /[|&^()]/.test(spec) || /\S\s+\S/.test(spec)
+  return `${llm} is a decision model, not a chat model; use \`faces decide\` with @<face>:maestro-1/${llm}`
 }
 
 /**
  * Decide which API endpoint a chat request should be posted to, driven entirely
- * by the model catalog (GET /v1/models). For a bare alias we resolve the face's
- * default model from the local catalog, falling back to GET /v1/faces/{alias}.
+ * by the model catalog (GET /v1/models). `llm` is the downstream model, the part
+ * of `model` after the first `/` (`gpt-5.4` in `@alice:maestro-1/gpt-5.4`).
  */
-export async function resolveEndpoint(client: FacesClient, modelArg: string): Promise<RouteInfo> {
-  let llm = llmFromArg(modelArg)
+export async function resolveEndpoint(client: FacesClient, llm: string): Promise<RouteInfo> {
   const notChat = decisionModelError(llm)
   if (notChat) throw new Error(notChat)
 
-  // A composite formula has no stored default_model and isn't a catalog face, so
-  // never attempt an alias lookup: route purely off the explicit `@model`.
-  if (!llm && !isCompositeFormula(modelArg)) {
-    const alias = modelArg.split('@')[0]
-    llm = defaultModelFromCatalog(alias)
-    if (!llm) {
-      try {
-        const face = (await client.get(`/v1/faces/${seg(alias)}`)) as {default_model?: string}
-        llm = face.default_model || undefined
-      } catch {
-        // fall through to heuristic
-      }
-    }
-  }
-
   const map = buildMap(await getModels(client))
-  // An old host-prefixed id (openai-gpt-52) is still accepted by the server
-  // and misses here; it falls back to /v1/chat/completions, which every chat
-  // model answers on.
-  const hit = llm ? map.get(llm.toLowerCase()) : undefined
+  // A lab-qualified id (google/gemma-4-31b-it) is served under its own id too.
+  const key = llm.toLowerCase()
+  const hit = map.get(key) ?? (key.includes('/') ? map.get(key.slice(key.indexOf('/') + 1)) : undefined)
   if (hit) return {endpoint: hit.endpoint, llm, freeWhenConnected: hit.freeWhenConnected}
 
   return {endpoint: fallbackEndpoint(llm), llm, freeWhenConnected: false}

@@ -14,20 +14,21 @@ import {
   conversationLines,
   parsePremises,
 } from '../../conversation.js'
+import {asFace as faceAlone} from '../../model.js'
 
 export default class ConversationCreate extends BaseCommand {
   static description =
     'Start a state (formerly a conversation). The server keeps the situation your agent builds: premises ' +
     '(named facts, each with a status and what it depends on), the decisions faces made, and your messages. ' +
-    'Ask a face about it with faces choices --state-id, or pass its id with --conversation on decide or causes ' +
+    'Ask a face about it with faces choices --state-id, or pass its id with --conversation on chat or decide ' +
     'and send only what is new. Name a face and the state takes that face only; leave it out and it takes any ' +
     'of your faces. Opening one is free. A state expires 30 days after it was last used.'
 
   static examples = [
-    '<%= config.bin %> <%= command.id %> alice',
+    '<%= config.bin %> <%= command.id %> @alice',
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> --no-causes-visible --json',
-    '<%= config.bin %> <%= command.id %> alice --premise budget_usd=50000 --premise-description budget_usd="the most we can spend this year"',
+    '<%= config.bin %> <%= command.id %> @alice --premise budget_usd=50000 --premise-description budget_usd="the most we can spend this year"',
   ]
 
   static flags = {
@@ -49,8 +50,8 @@ export default class ConversationCreate extends BaseCommand {
   static args = {
     face: Args.string({
       description:
-        'The face alone: an alias, owner:alias, or a composite such as "(a | b)". No @model. Leave it out ' +
-        'for a state that takes any of your faces.',
+        'The face alone: @alice, @owner~alice, or a composite such as "(@a | @b)". No maestro or model. ' +
+        'Leave it out for a state that takes any of your faces.',
       required: false,
     }),
   }
@@ -58,8 +59,8 @@ export default class ConversationCreate extends BaseCommand {
   async run(): Promise<unknown> {
     const {args, flags} = await this.parse(ConversationCreate)
     const client = this.makeClient(flags)
-    const face = args.face?.trim()
-    if (face?.includes('@')) this.error(`A state is with a face alone: ${face.slice(0, face.lastIndexOf('@'))}`)
+    const face = args.face === undefined ? undefined : faceAlone(args.face)
+    if (face && /[:/]/.test(face)) this.error(`A state is with a face alone, with no maestro or model: ${face.split(/[:/]/)[0]}`)
 
     let items: Array<Record<string, unknown>>
     try {
@@ -88,7 +89,7 @@ export default class ConversationCreate extends BaseCommand {
 
     if (!this.jsonEnabled()) {
       for (const line of conversationLines(data)) this.log(line)
-      if (data.id) this.log(`\nAsk a face about it with: faces choices ${face ?? '<face>'} --state-id ${data.id} --question "..."`)
+      if (data.id) this.log(`\nAsk a face about it with: faces choices ${face ?? '@<face>'}:maestro-1 --state-id ${data.id} --question "..."`)
     }
     return data
   }

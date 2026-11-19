@@ -327,38 +327,6 @@ export function resolveProfileAddendum(text: string | undefined, file: string | 
 }
 
 /**
- * The face's cause for this turn, written by the caller: `--cause` or
- * `--cause-file`. The face answers on it instead of working out its own, so
- * no cause is worked out or charged for. Undefined when neither is given or the
- * text is blank, which the server would ignore anyway (the face then gives its own
- * cause as usual). Throws on a missing file. Over 30,000 tokens is the server's to
- * refuse, since only it counts tokens the way it bills them.
- */
-export function resolveCause(text: string | undefined, file: string | undefined): string | undefined {
-  let value = text
-  if (file !== undefined) {
-    if (!fs.existsSync(file)) throw new Error(`File not found: ${file}`)
-    value = fs.readFileSync(file, 'utf8')
-  }
-  return value !== undefined && value.trim() ? value : undefined
-}
-
-export const CAUSE_FLAG_DESCRIPTION =
-  'Supply this turn\'s cause yourself, at most 30,000 tokens. The model answers on it in place of the ' +
-  'face\'s own, and no cause is charged. Needs a model named (alias@model). It comes back where a cause ' +
-  'normally does.'
-
-export const CAUSE_FILE_FLAG_DESCRIPTION = 'Read --cause from a file.'
-
-/** The refusal for --cause on a face named alone, said before a request is sent. */
-export function causeNeedsModel(face: string): string {
-  return (
-    `--cause needs a model to answer on it: ${face}@<model>. A face named alone returns only its own ` +
-    'cause, so there is nothing to supply.'
-  )
-}
-
-/**
  * Flatten basic_facts/attributes from API's nested {value, status, identification} format
  * to simple {key: value} strings.
  */
@@ -409,102 +377,6 @@ export function extractStreamDelta(parsed: Record<string, unknown>): string {
   }
   const choices = parsed.choices as Array<Record<string, unknown>> | undefined
   return String((choices?.[0]?.delta as Record<string, unknown> | undefined)?.content ?? '')
-}
-
-/**
- * The face's cause from a streamed event, or '' when the event carries none.
- *
- * A face's cause comes before its answer in the stream, marked as the face's:
- *   - Chat Completions: `delta.cause`
- *   - Responses: `response.reasoning_summary_text.delta` on an `rs_faces_` item
- *   - Messages: a `thinking` delta on content block 0
- * A reasoning model's own working is separate and never taken for the face's:
- * `reasoning_content` on chat, other reasoning items, later thinking blocks.
- */
-export function extractStreamReasoning(parsed: Record<string, unknown>): string {
-  if (parsed.type === 'content_block_delta') {
-    if (parsed.index !== 0) return ''
-    return String((parsed.delta as Record<string, unknown> | undefined)?.thinking ?? '')
-  }
-  if (parsed.type === 'response.reasoning_summary_text.delta') {
-    const item = parsed.item_id
-    if (typeof item === 'string' && !item.startsWith('rs_faces_')) return ''
-    return String(parsed.delta ?? '')
-  }
-  const choices = parsed.choices as Array<Record<string, unknown>> | undefined
-  return String((choices?.[0]?.delta as Record<string, unknown> | undefined)?.cause ?? '')
-}
-
-/** Signature on the Messages thinking block that holds a face's cause. */
-export const FACES_THINKING_SIGNATURE = 'faces-reasoning'
-
-/** Id prefix of the Responses reasoning item that holds a face's cause. */
-export const FACES_REASONING_ITEM_PREFIX = 'rs_faces_'
-
-/**
- * The face's cause from a whole reply, by the endpoint that
- * answered, with the Responses item id that carried it. Empty when there is
- * none. Only what is marked as the face's is taken, never a model's own.
- */
-export function extractCause(body: Record<string, unknown>, endpoint: string): {text: string; id?: string} {
-  if (endpoint === '/v1/messages') {
-    const block = (body.content as Array<Record<string, unknown>> | undefined)?.find(
-      (b) => b.type === 'thinking' && b.signature === FACES_THINKING_SIGNATURE,
-    )
-    return {text: block ? String(block.thinking ?? '') : ''}
-  }
-  if (endpoint === '/v1/responses') {
-    const item = (body.output as Array<Record<string, unknown>> | undefined)?.find(
-      (o) => o.type === 'reasoning' && String(o.id ?? '').startsWith(FACES_REASONING_ITEM_PREFIX),
-    )
-    if (!item) return {text: ''}
-    const text = ((item.summary as Array<Record<string, unknown>> | undefined) ?? []).map((s) => String(s.text ?? '')).join('\n')
-    return {text, id: String(item.id)}
-  }
-  const choices = body.choices as Array<Record<string, unknown>> | undefined
-  return {text: String((choices?.[0]?.message as Record<string, unknown> | undefined)?.cause ?? '')}
-}
-
-/** The face's cause from a whole reply, by the endpoint that answered. '' when there is none. */
-export function extractReasoning(body: Record<string, unknown>, endpoint: string): string {
-  return extractCause(body, endpoint).text
-}
-
-export const REASONING_FLAG_DESCRIPTION =
-  'Also show the face\'s cause: the principal why behind its response in this context. Printed to ' +
-  'stderr ahead of the reply, so the reply alone still goes to stdout.'
-
-/** The heading the face's cause is shown under, on stderr, apart from the reply. */
-export function reasoningHeading(face: string): string {
-  return `${face.replace(/@.*$/, '')}'s cause:`
-}
-
-/**
- * What to say when a reply came back with a cause and no answer.
- *
- * A bare alias asks for the face's cause alone, and the server no longer
- * answers it on the face's default model. Nothing failed, so this is a note,
- * with the way to get a reply.
- */
-export function reasoningOnlyNote(face: string, llmFlag = true): string {
-  const bare = face.replace(/@.*$/, '')
-  return `That is ${bare}'s cause alone: a face named without a model gives no reply. ` +
-    `For one, name the model: ${bare}@<model>${llmFlag ? ', or add --llm <model>' : ''}.`
-}
-
-/**
- * Print a whole reply: the face's cause to stderr when asked for, then the
- * reply to stdout. With no reply the cause is the answer, so it goes to
- * stdout instead, followed by `note` on stderr when there is one.
- */
-export function writeReply(model: string, reasoning: string, text: string, showReasoning: boolean, note?: string): void {
-  if (!text && reasoning) {
-    process.stdout.write(`${reasoning}\n`)
-    if (note) process.stderr.write(`\n${note}\n`)
-    return
-  }
-  if (showReasoning && reasoning) process.stderr.write(`${reasoningHeading(model)}\n${reasoning}\n\n`)
-  process.stdout.write(`${text}\n`)
 }
 
 export const STREAM_FLAG_DESCRIPTION =
@@ -606,29 +478,16 @@ export function compileHint(face: string, recompile: boolean, verb = 'answer'): 
 /**
  * What to do about a refusal of a chat with a face, or undefined when there
  * is nothing to add to the server's message.
- *
- * A face's answer always comes with its cause, so where that cannot be given
- * the chat is refused rather than answered without it:
- *   - 409: compiled before causes launched. Recompiling fixes it; asking
- *     again does not. Also asked for the cause alone of a face with nothing
- *     compiled, which needs a first source.
+ *   - 409: the face has nothing compiled, or was compiled before the current
+ *     version. A first source or a recompile fixes it; asking again does not.
  *   - 504: the face did not finish within 300 seconds. Asking again may work.
  *   - 503: asking again may work, after the wait when one is named.
- *   - 400 with --style: the face has no style in that medium. Build one.
  */
-export function faceRefusalHint(err: FacesAPIError, model: string, style?: string): string | undefined {
-  const face = model.replace(/@[^@]*$/, '')
-  // A face with no style, or none in the medium asked for, is refused rather
-  // than answered in its ordinary voice. The server names the media it has.
-  if (style && (err.errorCode === 'style_medium_unavailable' || /has no (styles? yet|.* style)/i.test(err.message))) {
-    return `Build one: faces style:make ${face} --all\nOr leave out --style to answer without a built style.`
-  }
-  if (err.statusCode === 409) {
-    // A face with nothing compiled still chats, from its name and attributes,
-    // but has no cause to give alone. That wants a first source, not a
-    // recompile.
-    return compileHint(face, !/nothing compiled/i.test(err.message))
-  }
+export function faceRefusalHint(err: FacesAPIError, model: string): string | undefined {
+  // `alice` from `@alice:maestro-1/gpt-5.4`; `dana:alice` for another account's.
+  const slash = model.indexOf('/')
+  const face = (slash >= 0 ? model.slice(0, slash) : model).replace(/:\s*maestro-[^:]*$/i, '').replace(/^@/, '').replace('~', ':')
+  if (err.statusCode === 409) return compileHint(face, !/nothing compiled/i.test(err.message))
   // Every account has a `me` face; a missing one is the server's fault.
   if (err.statusCode === 404 && isMeAlias(face)) return ME_MISSING
   if (err.statusCode === 504) return 'The face did not finish within 300 seconds. Ask again.'
@@ -685,23 +544,6 @@ export const DOCUMENT_VS_THREAD =
   'faces compile:upload ALIAS --file FILE --kind thread --face-speaker NAME, so only the face\'s ' +
   'turns are used.'
 
-/**
- * `--style` on the chat commands: apply the face's built style for one medium.
- * The server checks the medium, so an unknown word is refused naming all eleven.
- */
-export const STYLE_FLAG_DESCRIPTION =
-  'Apply the style the face has built for this medium, one of: email, text message, social post, essay, ' +
-  'academic paper, blog post, legal document, thread reply, conversation, lecture, other. Leave it out and ' +
-  'no built style is applied. A face with no style in that medium is refused, naming the ones it has ' +
-  '(see them with faces face:get). Needs a single face and a model. Adds roughly 2,000 to 3,500 input ' +
-  'tokens per request. Sets --medium too. Chat commands only: causes and decide do not use a style.'
-
-/** `--medium` on the chat commands: say what the reply is. Needs no build and is never refused. */
-export const MEDIUM_FLAG_DESCRIPTION =
-  'What the reply is, so it is shaped for it: email, text message, social post, essay, academic paper, ' +
-  'blog post, legal document, thread reply, conversation, lecture, other. Needs no built style. Leave it ' +
-  'out and the medium is inferred from your message. With --style, leave it out or give the same medium.'
-
 export const SESSION_FLAG_DESCRIPTION =
   'The old name for --conversation, still accepted: add this turn to a session (a conversation), by id ' +
   '(from faces session:create or conversation:create). The session must be with this face.'
@@ -710,15 +552,6 @@ export const COMPACTION_FLAG_DESCRIPTION =
   'Read a compaction, by id (from faces conversation:compact or session:compact), alongside the messages ' +
   'sent. It must be of this face.'
 
-/** The request fields for --style, --medium, --session and --compaction, when given. */
-export function chatExtras(flags: {style?: string; medium?: string; session?: string; compaction?: string}): Record<string, string> {
-  const out: Record<string, string> = {}
-  if (flags.style) out.style = flags.style
-  if (flags.medium) out.medium = flags.medium
-  if (flags.session) out.session = flags.session
-  if (flags.compaction) out.compaction = flags.compaction
-  return out
-}
 
 /**
  * For the document commands, where leaving it out is not a choice any more.

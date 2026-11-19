@@ -139,8 +139,8 @@ export default class StyleMake extends BaseCommand {
     if (json) return {...publicJob(final), sources, skipped}
     for (const line of formatBuildReport(final)) this.log(line)
     this.log('')
-    // A style was applied on chat, which is retired: nothing applies one now.
-    this.log(`'${args.alias}' has built a style. It is kept on the face; no route applies a style since chat was retired.`)
+    // A built style is applied on chat, chosen for each request by its medium.
+    this.log(`'${args.alias}' has built a style. Chat with the face uses it when a request is in that medium.`)
     this.log(`Go back to the previous style: faces style:revert ${args.alias} --yes`)
     return final
   }

@@ -46,7 +46,7 @@ export default class FidelityPick extends BaseCommand {
         const run = await getRun(client, args.run_id)
         if (!run.next) this.error(`This run is finished. Read it with: faces fidelity:get ${args.run_id}`)
         if (run.next.awaiting !== 'choice') {
-          this.error(`Turn ${run.next.turn} has no answers to pick from, and new turns are retired with chat.`)
+          this.error(`Turn ${run.next.turn} has no answers to pick from, and new turns are retired.`)
         }
         turn = run.next.turn
       }
@@ -65,7 +65,7 @@ export default class FidelityPick extends BaseCommand {
       this.log(`See which answers were the face's: faces fidelity:get ${args.run_id}`)
       this.log(`Keep the conversation as a thread, to compile: faces fidelity:save-thread ${args.run_id}`)
     } else {
-      this.log('New turns are retired with chat, so the run cannot go further.')
+      this.log('New turns are retired, so the run cannot go further.')
     }
     return data
   }

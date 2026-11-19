@@ -3,20 +3,22 @@ import {BaseCommand} from '../../base.js'
 import {FacesAPIError} from '../../client.js'
 import {table} from '../../utils.js'
 
-const KINDS = ['choices', 'decision', 'cause', 'compile', 'chat', 'image', 'transcription']
+const KINDS = ['upstream', 'chat', 'decision', 'compile', 'image', 'transcription']
 
 export default class ModelsList extends BaseCommand {
   static description =
     'List the models you can name, once each, with their kind, endpoint and price (GET /v1/models). ' +
-    'Without --kind only chat models are listed; --kind choices lists the models faces choices runs on. ' +
+    'Upstream models are ours, the maestros, written after a face: @alice:maestro-1. Downstream models write ' +
+    'the answer, after the /: @alice:maestro-1/gpt-5.4. Each is priced on its own. Without --kind the maestros ' +
+    'and the chat models are listed; --kind decision lists the models faces decide answers on. ' +
     'CHATGPT marks the Codex-eligible models, which can run on a linked ChatGPT plan (style builds, interviews). ' +
     'Prices are per million tokens. No login needed.'
 
   static examples = [
     '<%= config.bin %> <%= command.id %>',
-    '<%= config.bin %> <%= command.id %> --kind choices',
+    '<%= config.bin %> <%= command.id %> --kind upstream',
     '<%= config.bin %> <%= command.id %> --kind decision',
-    '<%= config.bin %> <%= command.id %> --kind cause,compile',
+    '<%= config.bin %> <%= command.id %> --kind upstream,compile',
     '<%= config.bin %> <%= command.id %> --kind all --json',
     '<%= config.bin %> <%= command.id %> --provider anthropic',
   ]
@@ -24,7 +26,7 @@ export default class ModelsList extends BaseCommand {
   static flags = {
     ...BaseCommand.baseFlags,
     kind: Flags.string({
-      description: `One kind or a comma-separated list: ${KINDS.join(', ')}; or all. Default: chat.`,
+      description: `One kind or a comma-separated list: ${KINDS.join(', ')}; or all. Default: upstream and chat.`,
     }),
     provider: Flags.string({description: 'Only models from this lab (e.g. openai, anthropic, qwen)'}),
     chatgpt: Flags.boolean({
@@ -88,7 +90,14 @@ export default class ModelsList extends BaseCommand {
         notes.push(`${m.id}: each request adds ${m.added_tokens_per_request.toLocaleString('en-US')} tokens before pricing.`)
       }
       if (m.token_basis === 'source') notes.push(`${m.id}: priced per million source tokens compiled.`)
-      if (m.token_basis === 'processed') notes.push(`${m.id}: priced on the tokens each call processes, as its usage reports them.`)
+      if (m.token_basis === 'processed') notes.push(`${m.id}: on /v1/choices, priced on the tokens each call processes, as its usage reports them.`)
+      const st = m.steering as Record<string, unknown> | null | undefined
+      if (st && typeof st === 'object' && typeof st.input_cost_per_million_tokens === 'number') {
+        notes.push(
+          `${m.id}: steering a face over a downstream model (chat, decide) costs $${st.input_cost_per_million_tokens} per million ` +
+            `input tokens plus $${st.cost_per_call_usd} a call, with no output charge; the downstream model is billed at its listed price plus the markup.`,
+        )
+      }
       const inc = m.included_tokens_per_month as Record<string, unknown> | null | undefined
       if (inc && typeof inc === 'object') {
         const plans = Object.entries(inc).filter(([, n]) => typeof n === 'number' && n > 0).map(([p, n]) => `${p[0].toUpperCase()}${p.slice(1)} ${(n as number).toLocaleString('en-US')}`)

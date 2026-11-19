@@ -11,15 +11,14 @@ import {
   questionsProblem,
   MAX_WARM_UP_WAIT_S,
   QUESTION_TYPES,
-  causeLines,
   decisionLines,
-  type DecisionCauses,
   heldDecisionError,
   readStateFlags,
   readQuestionFlags,
   warmUpWait,
 } from '../decisions.js'
-import {compileHint, reasoningHeading, sayWarmUp, SESSION_FLAG_DESCRIPTION, COMPACTION_FLAG_DESCRIPTION} from '../utils.js'
+import {compileHint, sayWarmUp, SESSION_FLAG_DESCRIPTION, COMPACTION_FLAG_DESCRIPTION} from '../utils.js'
+import {modelProblem, parseModel} from '../model.js'
 
 /** Decision models served on /v1/decisions in OpenAI's format and refused on /v1/systemone. */
 const OPENAI_FORMAT_ONLY = ['gpt-6-luna'] as const
@@ -29,23 +28,21 @@ export default class Decide extends BaseCommand {
     'Ask what a face would decide. Describe a situation, ask typed questions about it, and get back numbers, ' +
     'as this face: a yes-or-no (noul), a pick between options (choice), or a place on a graded scale (score). ' +
     'faces choices gives you the options a face would weigh; this gives you what it would decide, for routing, ' +
-    'simulations or panels. The face\'s cause for each question guides the decision model\'s (--model) answer. A face\'s ' +
-    'answer takes about 10 to 20 seconds; one that runs long is held open by the server and can take a ' +
-    'minute or more. --baseline asks the decision model alone (no-face baseline), in about a second: the ' +
-    'number to compare a face\'s answer against. Name a face and ask no questions for its cause alone. On ' +
-    'Connect and Pro the cause counts against the plan\'s allowance and the decision model is paid from ' +
-    'credits; on Free both bill per token. A face needs something compiled.'
+    'simulations or panels. Name the model as the upstream model over the decision model: ' +
+    '@alice:maestro-1/jev-latest. The face steers the decision model\'s answer. An answer takes about 10 to 20 ' +
+    'seconds; one that runs long is held open by the server and can take a minute or more. ' +
+    'The steering is billed per input token plus a small fee per call (see faces models:list --kind upstream), ' +
+    'and the decision model at its listed price. A face needs something compiled.'
 
   static examples = [
-    '<%= config.bin %> <%= command.id %> alice --state "A colleague asks you to sign a grant proposal you have not read, due in an hour." ' +
+    '<%= config.bin %> <%= command.id %> @alice:maestro-1/jev-latest --state "A colleague asks you to sign a grant proposal you have not read, due in an hour." ' +
       '--question "Does the speaker sign?" --option yes="signs it as asked" --option no="declines to sign" ' +
       '--option later="asks for time to read it first"',
-    '<%= config.bin %> <%= command.id %> alice --state-file situation.txt --question "Is the speaker irritated?"',
-    '<%= config.bin %> <%= command.id %> alice --state-file situation.txt --question "How firm is the reply?" ' +
-      '--level yields --level hedges --level firm --show-cause',
-    '<%= config.bin %> <%= command.id %> --baseline --model clef-flash --state-file situation.txt --questions-file questions.json',
-    '<%= config.bin %> <%= command.id %> alice --state-file situation.txt',
-    '<%= config.bin %> <%= command.id %> alice --state-file situation.json --questions-file questions.json --model clef --json',
+    '<%= config.bin %> <%= command.id %> @alice:maestro-1/jev-latest --state-file situation.txt --question "Is the speaker irritated?"',
+    '<%= config.bin %> <%= command.id %> @alice:maestro-1-flash/clef --state-file situation.txt --question "How firm is the reply?" ' +
+      '--level yields --level hedges --level firm',
+    '<%= config.bin %> <%= command.id %> "(@alice | @bob):maestro-1/jev-latest" --state-file situation.json --questions-file questions.json --json',
+    '<%= config.bin %> <%= command.id %> @alice:maestro-1/gpt-6-luna --state-file situation.txt --questions-file questions.json',
   ]
 
   static flags = {
@@ -105,35 +102,15 @@ export default class Decide extends BaseCommand {
         '{"true": "...", "false": "..."}.',
       exclusive: ['question'],
     }),
-    model: Flags.string({
-      description:
-        'The decision model: the model that turns the situation into probabilities, as opposed to a ' +
-        'generative model that writes text. Checked against the decision models the API lists: ' +
-        'jev-latest, clef, clef-flash and gpt-6-luna today. gpt-6-luna answers in OpenAI\'s format only, ' +
-        'so it uses --format openai.',
-      default: 'jev-latest',
-    }),
-    baseline: Flags.boolean({
-      description:
-        'Ask the decision model alone, with no face: the no-face baseline. Costs only the decision model.',
-      default: false,
-    }),
-    'show-cause': Flags.boolean({
-      description:
-        'Also show the face\'s cause, one per question when there are several. Printed to stderr ahead of ' +
-        'the answers. It is always in --json, as cause and causes.',
-      default: false,
-    }),
-    ...conversationTurnFlags({exclusive: ['baseline']}),
+    ...conversationTurnFlags(),
     'depends-on': Flags.string({
       description:
         'In a state (--conversation), what this decision rests on, comma separated: premise keys and decision ids ' +
         `already in the state or set with --premise, at most ${MAX_DEPENDS_ON}. The decision is shown those, and is ` +
         'invalidated when one of them is. Left out, it rests on every premise in force.',
-      exclusive: ['baseline'],
     }),
-    session: Flags.string({description: SESSION_FLAG_DESCRIPTION, exclusive: ['baseline']}),
-    compaction: Flags.string({description: COMPACTION_FLAG_DESCRIPTION, exclusive: ['baseline']}),
+    session: Flags.string({description: SESSION_FLAG_DESCRIPTION}),
+    compaction: Flags.string({description: COMPACTION_FLAG_DESCRIPTION}),
     format: Flags.string({
       description:
         'The request shape: systemone (default, TypeSafe Jev\'s System One) or openai (OpenAI\'s Decisions ' +
@@ -151,7 +128,14 @@ export default class Decide extends BaseCommand {
   }
 
   static args = {
-    face: Args.string({description: 'Face alias to answer as, a saved composite, or a formula such as "(a | b)". Leave it out with --baseline.'}),
+    model: Args.string({
+      description:
+        'The upstream model over the decision model: @<face>:<maestro>/<decision model>, e.g. ' +
+        '@alice:maestro-1/jev-latest. Another account\'s face is @owner~face; a composite is ' +
+        '"(@a | @b):maestro-1/jev-latest". The decision models are jev-latest, clef, clef-flash and gpt-6-luna ' +
+        'today (faces models:list --kind decision); gpt-6-luna answers in OpenAI\'s format only, so it uses --format openai.',
+      required: true,
+    }),
   }
 
   async run(): Promise<unknown> {
@@ -159,8 +143,11 @@ export default class Decide extends BaseCommand {
     const client = this.makeClient(flags)
     const json = this.jsonEnabled()
 
-    if (flags.baseline && args.face) this.error('--baseline asks with no face, so leave the face out.')
-    if (!flags.baseline && !args.face) this.error('Name a face to ask, or pass --baseline to ask with none.')
+    const problem = modelProblem(args.model, 'both', 'jev-latest')
+    if (problem) this.error(problem)
+    const name = parseModel(args.model)
+    const face = name.faces as string
+    let downstream = name.downstream as string
 
     let turn: Record<string, unknown> = {}
     try {
@@ -175,32 +162,25 @@ export default class Decide extends BaseCommand {
 
     const state = this.readState(flags)
     const questions = this.readQuestions(flags)
-    if (!questions && flags.baseline) this.error('--baseline answers questions, so ask one with --question or --questions-file.')
-    if (questions) {
-      const problem = questionsProblem(questions, !flags.baseline,
-        (OPENAI_FORMAT_ONLY as readonly string[]).includes(flags.model.toLowerCase()))
-      if (problem) this.error(problem)
-      // The model is only used to answer questions.
-      this.models = await decisionModels(client)
-      // The server matches the id exactly, so send the catalog's spelling.
-      const match = this.models.find((m) => m.toLowerCase() === flags.model.toLowerCase())
-      if (!match) this.error(`'${flags.model}' is not a decision model. The decision models are: ${this.models.join(', ')}.`)
-      flags.model = match
-      // OpenAI's Decisions model is served only in OpenAI's format.
-      if ((OPENAI_FORMAT_ONLY as readonly string[]).includes(match)) {
-        if (this.argv.some((a) => a === '--format=systemone' || a === 'systemone')) {
-          this.error(`${match} answers in OpenAI's format only. Use --format openai, or leave --format out.`)
-        }
-        flags.format = 'openai'
+    if (!questions) this.error('Ask at least one question, with --question or --questions-file.')
+    const openaiOnly = (OPENAI_FORMAT_ONLY as readonly string[]).includes(downstream.toLowerCase())
+    const problemQ = questionsProblem(questions, true, openaiOnly)
+    if (problemQ) this.error(problemQ)
+    this.models = await decisionModels(client)
+    // The server matches the id exactly, so send the catalog's spelling.
+    const match = this.models.find((m) => m.toLowerCase() === downstream.toLowerCase())
+    if (!match) this.error(`'${downstream}' is not a decision model. The decision models are: ${this.models.join(', ')}.`)
+    downstream = match
+    // OpenAI's Decisions model is served only in OpenAI's format.
+    if ((OPENAI_FORMAT_ONLY as readonly string[]).includes(match)) {
+      if (this.argv.some((a) => a === '--format=systemone' || a === 'systemone')) {
+        this.error(`${match} answers in OpenAI's format only. Use --format openai, or leave --format out.`)
       }
+      flags.format = 'openai'
     }
 
-    // The server takes the part after @ as the decision model. The decision
-    // model alone is the no-face baseline, and the face alone, with no
-    // questions, is its cause and nothing else.
-    const face = args.face
-    const model = questions ? (face ? `${face}@${flags.model}` : flags.model) : face
-    let body: Record<string, unknown> = questions ? {model, state, questions} : {model, state}
+    const model = `${name.upstream}/${downstream}`
+    let body: Record<string, unknown> = {model, state, questions}
     if (flags.format === 'openai') {
       try {
         body = toOpenAIDecision(model, state, questions)
@@ -213,38 +193,24 @@ export default class Decide extends BaseCommand {
     Object.assign(body, turn)
 
     if (!json) {
-      process.stderr.write(
-        !questions
-          ? `Asking ${face} for its cause alone, with no questions.\n`
-          : face
-            ? `Asking ${face}. Decision model: ${flags.model}. This usually takes 10 to 20 seconds, sometimes a minute or more.\n`
-            : `Asking the decision model alone (no-face baseline). Decision model: ${flags.model}.\n`,
-      )
+      process.stderr.write(`Asking ${face}. Decision model: ${downstream}. This usually takes 10 to 20 seconds, sometimes a minute or more.\n`)
     }
 
-    let data: DecisionCauses & {answers?: Record<string, unknown>; decision_ids?: Record<string, string>}
+    let data: {answers?: Record<string, unknown>; decision_ids?: Record<string, string>}
     try {
       data = (await this.ask(client, body, flags.retry, json, flags.format === 'openai' ? '/v1/decisions' : '/v1/systemone')) as typeof data
     } catch (err) {
-      if (err instanceof FacesAPIError) this.error(this.explain(err, face, flags.model))
+      if (err instanceof FacesAPIError) this.error(this.explain(err, face, downstream))
       throw err
     }
 
     // Say plainly when a field this relies on is missing, rather than printing
     // an empty line: the API renames fields as it goes, and the fix is usually
-    // an update. With no face there is no cause to expect.
-    const expected = [...(questions ? ['answers'] : []), ...(face ? ['cause'] : [])]
-    const missing = missingFieldsNote(data, expected)
-    if (missing && !json && !questions) this.error(missing)
+    // an update.
+    const missing = missingFieldsNote(data, ['answers'])
     if (missing) process.stderr.write(`${missing}\n`)
 
     if (json) return data
-    if (!questions) {
-      this.log(data.cause ?? '')
-      return data
-    }
-    const cause = causeLines(data, Object.keys(questions))
-    if (flags['show-cause'] && cause.length > 0 && face) process.stderr.write(`${reasoningHeading(face)}\n${cause.join('\n')}\n\n`)
     const answers = flags.format === 'openai' ? fromOpenAIAnswers(data.answers, questions) : (data.answers ?? {})
     for (const line of decisionLines(answers)) this.log(line)
     const ids = Object.entries(data.decision_ids ?? {})
@@ -314,13 +280,12 @@ export default class Decide extends BaseCommand {
   private models?: string[]
 
   /** The refusal, with what to do about it. */
-  private explain(err: FacesAPIError, face: string | undefined, model: string): string {
+  private explain(err: FacesAPIError, face: string, model: string): string {
     const head = `HTTP ${err.statusCode}: ${err.message}`
     switch (err.statusCode) {
       case 409: {
-        if (!face) return head
         // Nothing compiled at all wants a first source, not a recompile.
-        return `${head}\n${compileHint(face, !/nothing compiled/i.test(err.message), 'decide')}`
+        return `${head}\n${compileHint(face.replace(/^@/, '').replace('~', ':'), !/nothing compiled/i.test(err.message), 'decide')}`
       }
 
       case 503: {
@@ -328,11 +293,11 @@ export default class Decide extends BaseCommand {
         // it out. Without one, the decision model failed; that may pass.
         if (err.retryAfter !== undefined) return `${head}\nTry again in ${err.retryAfter}s.`
         const others = (this.models ?? [...DECISION_MODELS]).filter((m) => m !== model).join(', ')
-        return `${head}\nTry again. If the message names the decision model, another --model may answer (${others}).`
+        return `${head}\nTry again. If the message names the decision model, another decision model may answer (${others}).`
       }
 
       case 504: {
-        return `${head}\n${face ? 'The face' : 'The decision'} did not finish within 300 seconds. Ask again.`
+        return `${head}\nThe face did not finish within 300 seconds. Ask again.`
       }
 
       default: {

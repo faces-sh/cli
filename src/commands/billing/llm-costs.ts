@@ -7,7 +7,7 @@ import {llmCostLab} from '../../billing.js'
 export default class BillingLlmCosts extends BaseCommand {
   static description =
     'List available LLMs, their per-token costs and what you have spent on each. Models are listed once, ' +
-    'under the id their lab gives them. Compile and cause prices, and what each plan includes, are listed ' +
+    'under the id their lab gives them. Maestro and compile prices, and what each plan includes, are listed ' +
     'after the table. For the full catalog, with endpoints and which models are Codex-eligible, see faces models:list.'
 
   static flags = {
@@ -75,11 +75,11 @@ export default class BillingLlmCosts extends BaseCommand {
     for (const line of await this.facesPrices(client)) this.log(line)
   }
 
-  /** Compiling and a face's cause are priced by Faces, not a lab: from the model catalog. */
+  /** The maestros and compiling are priced by Faces, not a lab: from the model catalog. */
   private async facesPrices(client: ReturnType<typeof this.makeClient>): Promise<string[]> {
     let models: Array<Record<string, unknown>>
     try {
-      const raw = (await client.get('/v1/models', {params: {kind: 'compile,cause'}})) as Record<string, unknown>
+      const raw = (await client.get('/v1/models', {params: {kind: 'upstream,compile'}})) as Record<string, unknown>
       models = (Array.isArray(raw) ? raw : (raw.data ?? [])) as Array<Record<string, unknown>>
     } catch {
       return []
@@ -99,9 +99,13 @@ export default class BillingLlmCosts extends BaseCommand {
           `Compiling (${m.id}): $${per} per million source tokens compiled${markup}.` +
             (plans.length > 0 ? ` Included each month: ${plans.join(', ')} tokens; past that, credits pay.` : ''),
         )
-      } else if (m.kind === 'cause') {
-        const added = typeof m.added_tokens_per_request === 'number' ? ` plus ${m.added_tokens_per_request.toLocaleString('en-US')} tokens a request` : ''
-        lines.push(`Causes (${m.id}): $${per} per million input tokens${added}${markup}.`)
+      } else if (m.kind === 'upstream') {
+        const out = m.output_cost_per_million_tokens
+        lines.push(`${m.id} on choices: $${per} per million input tokens${typeof out === 'number' ? `, $${out} per million output` : ''}${markup}.`)
+        const st = m.steering as Record<string, unknown> | null | undefined
+        if (st && typeof st.input_cost_per_million_tokens === 'number') {
+          lines.push(`${m.id} steering chat and decisions: $${st.input_cost_per_million_tokens} per million input tokens plus $${st.cost_per_call_usd} a call, no output charge.`)
+        }
       }
     }
     return lines.length > 0 ? ['', ...lines] : []

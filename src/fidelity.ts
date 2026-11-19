@@ -70,7 +70,7 @@ export function nextStep(run: FidelityRun): string | undefined {
   }
   return run.next.awaiting === 'choice'
     ? `Pick the answer that sounds more like the person: faces fidelity:pick ${id} a|b [--correction "..."]`
-    : `Turn ${run.next.turn} waits for a message, and new turns are retired with chat.`
+    : `Turn ${run.next.turn} waits for a message, and new turns are retired.`
 }
 
 /** The run's state in labelled lines, without the turns' texts. */

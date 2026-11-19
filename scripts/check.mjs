@@ -401,24 +401,24 @@ eq('limit: null', readableLimit(null), '-')
 const connect = {
   plan: 'connect',
   allowances: {
-    cause_5h: {limit: 640000, used: 14500, remaining: 625500, resets_at: null},
-    cause_week: {limit: 2500000, used: 14500, remaining: 2485500, resets_at: '2026-10-19T09:44:30.953480'},
-    cause_month: {limit: 10000000, used: 14500, remaining: 9985500, resets_at: '2026-10-28T09:44:30.953480'},
+    upstream_5h: {limit: 640000, used: 14500, remaining: 625500, resets_at: null},
+    upstream_week: {limit: 2500000, used: 14500, remaining: 2485500, resets_at: '2026-10-19T09:44:30.953480'},
+    upstream_month: {limit: 10000000, used: 14500, remaining: 9985500, resets_at: '2026-10-28T09:44:30.953480'},
     compile_month: {limit: 250000, used: 0, remaining: 250000, resets_at: '2026-10-28T09:44:30.953480'},
   },
-  rates: {cause_usd_per_million_input_tokens: 0.75, cause_added_tokens: 1500, compile_usd_per_million_source_tokens: 25, model_markup: 0.05},
+  rates: {steering_usd_per_million_input_tokens: 0.42, steering_usd_per_call: 0.00042, choices_usd_per_million_input_tokens: 0.42, choices_usd_per_million_output_tokens: 1, compaction_usd_per_million_tokens: 0.75, compile_usd_per_million_source_tokens: 25, model_markup: 0.05},
 }
 const meter = allowanceLines(connect)
 eq('allowance: heading', meter[0], 'Connect allowances (tokens):')
 eq('allowance: 5h rolls', meter[1], '  choices and steering, rolling 5 hours  14.5k of 640k (2%)   rolls')
 eq('allowance: week resets', meter[2], '  choices and steering, this week        14.5k of 2.5M (<1%)  resets 2026-10-19 09:44 UTC')
 eq('allowance: compile', meter[4], '  compile, this month                    0 of 250k (0%)       resets 2026-10-28 09:44 UTC')
-eq('allowance: past it names the rates', /maestro rates \(faces models:list --kind upstream\) and \$25 per million compile/.test(meter[5]), true)
+eq('allowance: past it names the rates', /\$0\.42 per million steering tokens plus \$0\.00042 a call, \$0\.42 and \$1 per million choices input and output tokens, on maestro-1 \(10 times on maestro-1-flash\), and \$25 per million compile/.test(meter[5]), true)
 eq('allowance: free has none', allowanceLines({plan: 'free', allowances: null}), [])
 eq('allowance: a zero limit is none, not 0 of 0', allowanceLines({plan: 'pro', allowances: {compile_month: {limit: 0, used: 0, resets_at: '2026-11-01T00:00:00'}}})[1], '  compile, this month  none, paid per token')
 eq('allowance: a zero unknown key is none too', allowanceLines({plan: 'pro', allowances: {decide_day: {limit: 0, used: 0}}})[1].includes('none, paid per token'), true)
 eq('allowance: names the rush rate', /\$25 per million compile tokens \(\$30 for a rush\)\./.test(allowanceLines({...connect, rates: {...connect.rates, compile_rush_usd_per_million_source_tokens: 30}})[5]), true)
-const team = allowanceLines({plan: 'team', allowances: {cause_month: {limit: -1, used: 900, remaining: null, resets_at: '2026-11-01T00:00:00'}}})
+const team = allowanceLines({plan: 'team', allowances: {upstream_month: {limit: -1, used: 900, remaining: null, resets_at: '2026-11-01T00:00:00'}}})
 eq('allowance: team is unlimited, never used up', team, ['Team allowances (tokens):', '  choices and steering, this month  900 used, unlimited'])
 eq('allowance: an unknown key still shows', allowanceLines({plan: 'pro', allowances: {decide_day: {limit: 10, used: 2}}}).some((l) => l.includes('decide_day')), true)
 eq('tokens', [tokens(400000), tokens(1600000), tokens(6300000), tokens(14500), tokens(651), tokens(null)], ['400k', '1.6M', '6.3M', '14.5k', '651', '-'])

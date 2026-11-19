@@ -22,9 +22,9 @@ export function planName(plan: unknown): string {
 
 /** What each allowance counts, in the order a meter shows them. */
 const ALLOWANCES: Array<[string, string]> = [
-  ['cause_5h', 'choices and steering, rolling 5 hours'],
-  ['cause_week', 'choices and steering, this week'],
-  ['cause_month', 'choices and steering, this month'],
+  ['upstream_5h', 'choices and steering, rolling 5 hours'],
+  ['upstream_week', 'choices and steering, this week'],
+  ['upstream_month', 'choices and steering, this month'],
   ['compile_month', 'compile, this month'],
 ]
 
@@ -120,8 +120,14 @@ export function allowanceLines(sub: Record<string, unknown>): string[] {
       const rush = typeof rates.compile_rush_usd_per_million_source_tokens === 'number'
         ? ` ($${rates.compile_rush_usd_per_million_source_tokens} for a rush)`
         : ''
+      const steer = typeof rates.steering_usd_per_million_input_tokens === 'number' && typeof rates.steering_usd_per_call === 'number'
+        ? `$${rates.steering_usd_per_million_input_tokens} per million steering tokens plus $${rates.steering_usd_per_call} a call, `
+        : ''
+      const choices = typeof rates.choices_usd_per_million_input_tokens === 'number' && typeof rates.choices_usd_per_million_output_tokens === 'number'
+        ? `$${rates.choices_usd_per_million_input_tokens} and $${rates.choices_usd_per_million_output_tokens} per million choices input and output tokens, `
+        : ''
       past +=
-        ' Credits pay the maestro rates (faces models:list --kind upstream) and ' +
+        ` Credits pay ${steer}${choices}on maestro-1 (10 times on maestro-1-flash), and ` +
         `$${rates.compile_usd_per_million_source_tokens} per million compile tokens${rush}.`
     }
     lines.push(`  ${past}`)

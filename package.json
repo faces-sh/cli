@@ -103,7 +103,7 @@
         "description": "Your plan: show, subscribe, switch and cancel"
       },
       "fidelity": {
-        "description": "Fidelity runs made before: read, pick and save"
+        "description": "Fidelity runs: start, turn, pick, read and save"
       },
       "benchmark": {
         "description": "Compare a face against a reference model on its own material"

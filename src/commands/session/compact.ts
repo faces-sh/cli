@@ -7,10 +7,10 @@ import {retryOnceOnWarmUp, sayWarmUp, seg} from '../../utils.js'
 
 export default class SessionCompact extends BaseCommand {
   static description =
-    'Compact a session: a summary of the face\'s position over the session, in the face\'s own terms, ' +
-    'stored under a compaction id. Pass that id with --compaction on a later request with the same face, ' +
-    'and send only the messages you still want read. Billed at the cause rate on the tokens it reads and ' +
-    'writes; on Connect and Pro it counts against the cause allowance. A failed compaction is not charged. ' +
+    'Compact a session: the face\'s position over the session, kept on the server under a compaction id. ' +
+    'Pass that id with --compaction on a later request with the same face, and send only the messages you ' +
+    'still want read. Billed on the tokens it reads and writes; on Connect and Pro it counts against the ' +
+    'plan\'s allowance. A failed compaction is not charged. ' +
     'A compaction expires 30 days after it is written. Sessions are now called states: see faces state:compact.'
 
   static examples = [
@@ -50,12 +50,10 @@ export default class SessionCompact extends BaseCommand {
     }
 
     if (!json) {
-      if (typeof data.cause === 'string') this.log(data.cause)
-      this.log('')
       this.log(`compaction: ${data.compaction_id ?? '-'}`)
       if (data.turns !== undefined) this.log(`turns:      ${data.turns}`)
       if (data.expires_at) this.log(`expires:    ${data.expires_at}`)
-      if (data.compaction_id) this.log(`\nUse it with: faces causes <face> --compaction ${data.compaction_id} -m "..."`)
+      if (data.compaction_id) this.log(`\nUse it with: faces chat:chat @<face>:maestro-1/<model> --compaction ${data.compaction_id} -m "..."`)
     }
     return data
   }

@@ -25,15 +25,10 @@ import {
   compileProgressLabel,
   compileStatusOf,
   readableLimit,
-  extractReasoning,
-  extractCause,
-  extractStreamReasoning,
   extractStreamDelta,
-  reasoningHeading,
   retryOnceOnWarmUp,
   faceRefusalHint,
   streamChat,
-  resolveCause,
   seg,
   badFaceName, badToolNames, compileCostNote,
   table,
@@ -41,7 +36,6 @@ import {
   isCalendarDate,
   parseBudget,
   parseTemperature,
-  chatExtras,
   faceStyles,
   localTime,
   startsAtLine,
@@ -60,7 +54,7 @@ import {
 } from '../dist/utils.js'
 import fs from 'node:fs'
 import {FacesClient, FacesAPIError, refusalGuidance, parseRetryAfter, readableDetail, streamErrorOf, heldChatError, looksOutOfDate, missingFieldsNote, outOfDateHint, rateLimitWait, compareVersions, CLI_VERSION} from '../dist/client.js'
-import {parseDecisionOption, questionsProblem, toOpenAIDecision, fromOpenAIAnswers, decisionLines, causeLines, warmUpWait, MAX_WARM_UP_WAIT_S, heldDecisionError} from '../dist/decisions.js'
+import {parseDecisionOption, questionsProblem, toOpenAIDecision, fromOpenAIAnswers, decisionLines, warmUpWait, MAX_WARM_UP_WAIT_S, heldDecisionError} from '../dist/decisions.js'
 import {allowanceLines, cardLine, tokens, percentUsed, llmCostLab} from '../dist/billing.js'
 import {decisionModelError} from '../dist/routing.js'
 import {publicJob, autoTrigger, reportWarnings, jobFailureMessage, servedBy, styleCreditRefusal} from '../dist/style.js'
@@ -69,7 +63,9 @@ import {childPath} from '../dist/paths.js'
 import {score10} from '../dist/fidelity.js'
 import {resultLines, benchmarkHint} from '../dist/benchmark.js'
 import {conversationHint, parsePremises, parseDependsOn, premiseValue, conversationFields, clientItems, conversationLines, itemLines, premiseLines, staleDecisionLines, statusChangeLines} from '../dist/conversation.js'
-import {asView, choicesLines, choicesHint} from '../dist/choices.js'
+import {choicesLines, choicesHint} from '../dist/choices.js'
+import {parseModel, modelProblem, asFace} from '../dist/model.js'
+import {chatPayload, replyText} from '../dist/chat.js'
 
 let failed = 0
 let ran = 0
@@ -364,11 +360,6 @@ eq(
 eq('decision lines: a non-number is a dash, not NaN%', decisionLines({q: {type: 'choice', choice: 'a', probabilities: {a: 1, b: null}}}, 4), ['q: a', '  a  100.0%  ####', '  b  -'])
 eq('decision lines: an unknown type is shown, not dropped', decisionLines({q: {type: 'new', x: 1}}), ['q', '  {"type":"new","x":1}'])
 
-eq('cause lines: one when every question shares it', causeLines({cause: 'c', causes: {a: 'c'}}, ['a']), ['c'])
-eq('cause lines: per question when they differ', causeLines({cause: 'c', causes: {a: 'c', b: 'd'}}, ['a', 'b']), ['a:', 'c', '', 'b:', 'd'])
-eq('cause lines: a question missing from causes falls back to cause', causeLines({cause: 'c', causes: {b: 'd'}}, ['a', 'b']), ['a:', 'c', '', 'b:', 'd'])
-eq('cause lines: the old reasoning field is not read', causeLines({reasoning: 'r'}, ['a']), [])
-eq('cause lines: face alone', causeLines({cause: 'c'}, []), ['c'])
 
 // --- the update hint ---------------------------------------------------------------
 eq('out of date: a route that is gone', looksOutOfDate(404, 'Not Found'), true)
@@ -381,23 +372,7 @@ eq('missing fields: named with the update', missingFieldsNote({}, ['cause']), `T
 eq('update hint names the version', outOfDateHint().includes(`(${JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version})`), true)
 
 // --- the face's reasoning, where each API keeps it ------------------------------
-eq('reasoning: chat cause', extractReasoning({choices: [{message: {content: null, cause: 'r'}}]}, '/v1/chat/completions'), 'r')
-eq('reasoning: chat reasoning_content is the model\'s, not the face\'s', extractReasoning({choices: [{message: {content: 't', reasoning_content: 'm'}}]}, '/v1/chat/completions'), '')
-eq('cause: responses face item, with its id', extractCause({output: [{type: 'reasoning', id: 'rs_abc', summary: [{text: 'm'}]}, {type: 'reasoning', id: 'rs_faces_1', summary: [{text: 'r'}]}, {type: 'message'}]}, '/v1/responses'), {text: 'r', id: 'rs_faces_1'})
-eq('reasoning: responses none', extractReasoning({output: [{type: 'message'}]}, '/v1/responses'), '')
-eq('reasoning: messages faces block only', extractReasoning({content: [{type: 'thinking', thinking: 'm', signature: 'sig'}, {type: 'thinking', thinking: 'r', signature: 'faces-reasoning'}, {type: 'text', text: 't'}]}, '/v1/messages'), 'r')
-eq('reasoning: messages none', extractReasoning({content: [{type: 'text', text: 't'}]}, '/v1/messages'), '')
-eq('stream reasoning: chat cause', extractStreamReasoning({choices: [{delta: {cause: 'r'}}]}), 'r')
-eq('stream reasoning: chat reasoning_content is the model\'s', extractStreamReasoning({choices: [{delta: {reasoning_content: 'm'}}]}), '')
-eq('stream reasoning: chat content is not reasoning', extractStreamReasoning({choices: [{delta: {content: 't'}}]}), '')
-eq('stream reasoning: messages block 0', extractStreamReasoning({type: 'content_block_delta', index: 0, delta: {thinking: 'r'}}), 'r')
-eq('stream reasoning: the model\'s own thinking is not the face\'s', extractStreamReasoning({type: 'content_block_delta', index: 1, delta: {thinking: 'm'}}), '')
-eq('stream reasoning: responses face item', extractStreamReasoning({type: 'response.reasoning_summary_text.delta', item_id: 'rs_faces_1', delta: 'r'}), 'r')
-eq('stream reasoning: responses model item', extractStreamReasoning({type: 'response.reasoning_summary_text.delta', item_id: 'rs_abc', delta: 'm'}), '')
 eq('stream text: thinking is not text', extractStreamDelta({type: 'content_block_delta', index: 0, delta: {thinking: 'r'}}), '')
-eq('cause heading: no model', reasoningHeading('alice@gpt-5.4'), "alice's cause:")
-eq('chat extras: only what was given', chatExtras({style: 'email', session: 'fs_1'}), {style: 'email', session: 'fs_1'})
-eq('chat extras: medium and compaction', chatExtras({medium: 'essay', compaction: 'fcmp_1'}), {medium: 'essay', compaction: 'fcmp_1'})
 
 // --- warm-up: honour Retry-After exactly, and only a 503 that carries one -------
 eq('retry-after: seconds', parseRetryAfter('87'), 87)
@@ -426,26 +401,25 @@ eq('limit: null', readableLimit(null), '-')
 const connect = {
   plan: 'connect',
   allowances: {
-    cause_5h: {limit: 640000, used: 14500, remaining: 625500, resets_at: null},
-    cause_week: {limit: 2500000, used: 14500, remaining: 2485500, resets_at: '2026-10-19T09:44:30.953480'},
-    cause_month: {limit: 10000000, used: 14500, remaining: 9985500, resets_at: '2026-10-28T09:44:30.953480'},
+    upstream_5h: {limit: 640000, used: 14500, remaining: 625500, resets_at: null},
+    upstream_week: {limit: 2500000, used: 14500, remaining: 2485500, resets_at: '2026-10-19T09:44:30.953480'},
+    upstream_month: {limit: 10000000, used: 14500, remaining: 9985500, resets_at: '2026-10-28T09:44:30.953480'},
     compile_month: {limit: 250000, used: 0, remaining: 250000, resets_at: '2026-10-28T09:44:30.953480'},
   },
-  rates: {cause_usd_per_million_input_tokens: 0.75, cause_added_tokens: 1500, compile_usd_per_million_source_tokens: 25, model_markup: 0.05},
+  rates: {steering_usd_per_million_input_tokens: 0.42, steering_usd_per_call: 0.00042, choices_usd_per_million_input_tokens: 0.42, choices_usd_per_million_output_tokens: 1, compaction_usd_per_million_tokens: 0.75, compile_usd_per_million_source_tokens: 25, model_markup: 0.05},
 }
 const meter = allowanceLines(connect)
 eq('allowance: heading', meter[0], 'Connect allowances (tokens):')
-eq('allowance: 5h rolls', meter[1], '  causes, rolling 5 hours  14.5k of 640k (2%)   rolls')
-eq('allowance: week resets', meter[2], '  causes, this week        14.5k of 2.5M (<1%)  resets 2026-10-19 09:44 UTC')
-eq('allowance: compile', meter[4], '  compile, this month      0 of 250k (0%)       resets 2026-10-28 09:44 UTC')
-eq('allowance: past it names the rates', /\$0\.75 per million cause tokens, each cause counting its input tokens plus 1,500, and \$25 per million compile/.test(meter[5]), true)
-eq('allowance: no added tokens, no clause', /\$1 per million cause tokens and \$25/.test(allowanceLines({...connect, rates: {cause_usd_per_million_input_tokens: 1, compile_usd_per_million_source_tokens: 25}})[5]), true)
+eq('allowance: 5h rolls', meter[1], '  choices and steering, rolling 5 hours  14.5k of 640k (2%)   rolls')
+eq('allowance: week resets', meter[2], '  choices and steering, this week        14.5k of 2.5M (<1%)  resets 2026-10-19 09:44 UTC')
+eq('allowance: compile', meter[4], '  compile, this month                    0 of 250k (0%)       resets 2026-10-28 09:44 UTC')
+eq('allowance: past it names the rates', /\$0\.42 per million steering tokens plus \$0\.00042 a call, \$0\.42 and \$1 per million choices input and output tokens, on maestro-1 \(10 times on maestro-1-flash\), and \$25 per million compile/.test(meter[5]), true)
 eq('allowance: free has none', allowanceLines({plan: 'free', allowances: null}), [])
 eq('allowance: a zero limit is none, not 0 of 0', allowanceLines({plan: 'pro', allowances: {compile_month: {limit: 0, used: 0, resets_at: '2026-11-01T00:00:00'}}})[1], '  compile, this month  none, paid per token')
 eq('allowance: a zero unknown key is none too', allowanceLines({plan: 'pro', allowances: {decide_day: {limit: 0, used: 0}}})[1].includes('none, paid per token'), true)
 eq('allowance: names the rush rate', /\$25 per million compile tokens \(\$30 for a rush\)\./.test(allowanceLines({...connect, rates: {...connect.rates, compile_rush_usd_per_million_source_tokens: 30}})[5]), true)
-const team = allowanceLines({plan: 'team', allowances: {cause_month: {limit: -1, used: 900, remaining: null, resets_at: '2026-11-01T00:00:00'}}})
-eq('allowance: team is unlimited, never used up', team, ['Team allowances (tokens):', '  causes, this month  900 used, unlimited'])
+const team = allowanceLines({plan: 'team', allowances: {upstream_month: {limit: -1, used: 900, remaining: null, resets_at: '2026-11-01T00:00:00'}}})
+eq('allowance: team is unlimited, never used up', team, ['Team allowances (tokens):', '  choices and steering, this month  900 used, unlimited'])
 eq('allowance: an unknown key still shows', allowanceLines({plan: 'pro', allowances: {decide_day: {limit: 10, used: 2}}}).some((l) => l.includes('decide_day')), true)
 eq('tokens', [tokens(400000), tokens(1600000), tokens(6300000), tokens(14500), tokens(651), tokens(null)], ['400k', '1.6M', '6.3M', '14.5k', '651', '-'])
 eq('card line', cardLine({id: 'pm_1', brand: 'visa', last4: '4242', exp_month: 8, exp_year: 2029, is_default: true}), 'visa ending 4242, expires 08/2029  pm_1  (default)')
@@ -532,8 +506,8 @@ eq('messages stream: status in error', streamErrorOf('{"type": "error", "error":
 eq('chat stream: retryable false is kept', streamErrorOf('{"error": {"message": "m", "type": "provider_error", "code": 503, "status": 503, "retryable": false}}')?.retryable, false)
 eq('held body: retryable false is kept', heldChatError({detail: 'm', error: {message: 'm', type: 'provider_error', status: 503, retryable: false}})?.retryable, false)
 eq('details carry retryable', new FacesAPIError(503, 'm', {details: {type: 'provider_error', retryable: false}}).retryable, false)
-eq('503 not retryable: no "try again" hint', faceRefusalHint(new FacesAPIError(503, 'This model is not available right now. Try another model.', {retryable: false}), 'alice@x'), undefined)
-eq('503 retryable: try again', faceRefusalHint(new FacesAPIError(503, 'm', {retryable: true}), 'alice@x'), 'Try again.')
+eq('503 not retryable: no "try again" hint', faceRefusalHint(new FacesAPIError(503, 'This model is not available right now. Try another model.', {retryable: false}), '@alice:maestro-1/x'), undefined)
+eq('503 retryable: try again', faceRefusalHint(new FacesAPIError(503, 'm', {retryable: true}), '@alice:maestro-1/x'), 'Try again.')
 
 async function streaming() {
   let mode = ''
@@ -614,34 +588,26 @@ async function warmUp() {
 }
 await warmUp()
 
-eq('409 hint: recompile', /faces face:sources alice/.test(faceRefusalHint(new FacesAPIError(409, 'm'), 'alice@gpt-5.4')), true)
-eq('409 hint: someone else\'s face', faceRefusalHint(new FacesAPIError(409, 'm'), 'head:socrates@x'), 'head:socrates needs recompiling by its owner before it can answer.')
-eq('no styles: build one', faceRefusalHint(new FacesAPIError(400, "'alice' has no styles yet."), 'alice@x', 'email'), "Build one: faces style:make alice --all\nOr leave out --style to answer without a built style.")
-eq('no style in that medium: build one', /^Build one/.test(faceRefusalHint(new FacesAPIError(400, 'This face has no lecture style. Its styles: email'), 'alice@x', 'lecture') ?? ''), true)
-eq('a style hint needs --style', faceRefusalHint(new FacesAPIError(400, "'alice' has no styles yet."), 'alice@x'), undefined)
+eq('409 hint: recompile', /faces face:sources alice/.test(faceRefusalHint(new FacesAPIError(409, 'm'), '@alice:maestro-1/gpt-5.4')), true)
+eq('409 hint: someone else\'s face', faceRefusalHint(new FacesAPIError(409, 'm'), '@head~socrates:maestro-1/x'), 'head:socrates needs recompiling by its owner before it can answer.')
 eq('faceStyles reads styles', faceStyles({styles: ['email', 'essay']}), ['email', 'essay'])
 eq('faceStyles: none', [faceStyles({styles: []}), faceStyles({}), faceStyles({styles: null})], [[], [], []])
-eq('503 hint: try again', faceRefusalHint(new FacesAPIError(503, 'm'), 'alice@x'), 'Try again.')
-eq('503 hint names the wait', /in 30s/.test(faceRefusalHint(new FacesAPIError(503, 'm', {retryAfter: 30}), 'alice@x')), true)
-eq('503 hint: no warm-up', /warm/i.test(faceRefusalHint(new FacesAPIError(503, 'm', {retryAfter: 30}), 'alice@x') ?? ''), false)
-eq('504 hint: ask again', faceRefusalHint(new FacesAPIError(504, 'm'), 'alice@x'), 'The face did not finish within 300 seconds. Ask again.')
-eq('409 nothing compiled: a first source', /^Give it a first source: faces compile:upload testo --file <file>\./.test(faceRefusalHint(new FacesAPIError(409, 'this face has nothing compiled, so it has no reasoning'), 'testo') ?? ''), true)
-eq('409 nothing compiled on a formula: each face', faceRefusalHint(new FacesAPIError(409, 'this face has nothing compiled'), '(a | b)@x'), 'Every face in (a | b) needs something compiled: faces compile:upload <alias> --file <file> for each.')
-eq('409 recompile on a formula: no face:sources of a formula', /face:sources/.test(faceRefusalHint(new FacesAPIError(409, 'compiled before reasoning launched'), '(a & b)@x') ?? ''), false)
+eq('503 hint: try again', faceRefusalHint(new FacesAPIError(503, 'm'), '@alice:maestro-1/x'), 'Try again.')
+eq('503 hint names the wait', /in 30s/.test(faceRefusalHint(new FacesAPIError(503, 'm', {retryAfter: 30}), '@alice:maestro-1/x')), true)
+eq('503 hint: no warm-up', /warm/i.test(faceRefusalHint(new FacesAPIError(503, 'm', {retryAfter: 30}), '@alice:maestro-1/x') ?? ''), false)
+eq('504 hint: ask again', faceRefusalHint(new FacesAPIError(504, 'm'), '@alice:maestro-1/x'), 'The face did not finish within 300 seconds. Ask again.')
+eq('409 nothing compiled: a first source', /^Give it a first source: faces compile:upload testo --file <file>\./.test(faceRefusalHint(new FacesAPIError(409, 'this face has nothing compiled'), '@testo:maestro-1/x') ?? ''), true)
+eq('409 nothing compiled on a formula: each face', faceRefusalHint(new FacesAPIError(409, 'this face has nothing compiled'), '(@a | @b):maestro-1/x'), 'Every face in (@a | @b) needs something compiled: faces compile:upload <alias> --file <file> for each.')
+eq('409 recompile on a formula: no face:sources of a formula', /face:sources/.test(faceRefusalHint(new FacesAPIError(409, 'compiled before the current version'), '(@a & @b):maestro-1/x') ?? ''), false)
 eq('422 empty_composite: says the result is empty', /Nothing is left once the formula is applied/.test(refusalGuidance(422, 'empty_composite', 'the intersection between these two faces is null') ?? ''), true)
-eq('422 no hint', faceRefusalHint(new FacesAPIError(422, 'm'), 'alice@x'), undefined)
+eq('422 no hint', faceRefusalHint(new FacesAPIError(422, 'm'), '@alice:maestro-1/x'), undefined)
 
 
 // --- a cause the caller writes ------------------------------------------------
-eq('cause given', resolveCause('I will not sign.', undefined), 'I will not sign.')
-eq('cause blank is not sent', resolveCause('   \n', undefined), undefined)
-eq('no cause', resolveCause(undefined, undefined), undefined)
-eq('cause from a file', resolveCause(undefined, new URL(import.meta.url).pathname).startsWith('/**'), true)
-eq('cause file missing', (() => { try { resolveCause(undefined, '/nonexistent/x'); return 'no throw' } catch (e) { return e.message } })(), 'File not found: /nonexistent/x')
 
 
 // --- a chat aimed at a decision model ------------------------------------------
-eq('decision model refused for chat', decisionModelError('jev-latest'), 'jev-latest is a decision model, not a chat model; use `faces decide`')
+eq('decision model refused for chat', decisionModelError('jev-latest'), 'jev-latest is a decision model, not a chat model; use `faces decide` with @<face>:maestro-1/jev-latest')
 eq('decision model match ignores case', /decision model/.test(decisionModelError('Clef-Flash') || ''), true)
 eq('chat model passes', decisionModelError('gpt-5.4'), undefined)
 eq('no model passes', decisionModelError(undefined), undefined)
@@ -1224,7 +1190,7 @@ async function groupNames() {
       r = await run(args)
       eq(`${args[0]} is gone`, [r.code !== 0, /not found/i.test(r.err)], [true, true])
     }
-    for (const args of [['face:list', '--team', GID], ['face:groups', 'ada', '--team', GID], ['models:list', '--codex'], ['decide', 'ada', '--reasoning']]) {
+    for (const args of [['face:list', '--team', GID], ['face:groups', 'ada', '--team', GID], ['models:list', '--codex'], ['decide', '@ada:maestro-1/jev-latest', '--reasoning']]) {
       r = await run(args)
       eq(`${args.at(-2) === '--team' ? args[0] + ' --team' : args.find((a) => a.startsWith('--'))} is gone`, [r.code !== 0, /Nonexistent flag/i.test(r.err)], [true, true])
     }
@@ -1281,8 +1247,8 @@ eq('name: empty', badFaceName('   '), 'The name is empty.')
 const qs = (n, extra = {}) => Object.fromEntries(Array.from({length: n}, (_, i) => [`q${i}`, {type: 'noul', instructions: 'x', ...extra}]))
 eq('questions: 10 with a face is fine', questionsProblem(qs(10), true), undefined)
 eq('questions: 11 with a face is refused', /At most 10 questions with a face \(got 11\)/.test(questionsProblem(qs(11), true) ?? ''), true)
-eq('questions: 32 with --baseline is fine', questionsProblem(qs(32), false), undefined)
-eq('questions: 33 with --baseline is refused', /At most 32/.test(questionsProblem(qs(33), false) ?? ''), true)
+eq('questions: 32 with no face is fine', questionsProblem(qs(32), false), undefined)
+eq('questions: 33 with no face is refused', /At most 32/.test(questionsProblem(qs(33), false) ?? ''), true)
 eq('choice: one option is refused', /has 1 option/.test(questionsProblem({c: {type: 'choice', criteria: {a: null}}}, true) ?? ''), true)
 eq('choice: 255 options is fine', questionsProblem({c: {type: 'choice', criteria: Object.fromEntries(Array.from({length: 255}, (_, i) => [`o${i}`, null]))}}, false), undefined)
 
@@ -1379,17 +1345,21 @@ async function fidelityFlow() {
   const env = {...process.env, HOME: home, FACES_BASE_URL: `http://127.0.0.1:${srv.address().port}`, FACES_TOKEN: 'jwt-check'}
   const run = (args) => new Promise((r) => execFile(process.execPath, ['bin/run.js', ...args], {env}, (err, stdout, stderr) => r({code: err?.code ?? 0, out: stdout + stderr})))
   try {
-    for (const gone of ['fidelity:start', 'fidelity:turn', 'fidelity:run', 'chat:chat', 'chat:messages', 'chat:responses', 'chat:thread']) {
-      const g = await run([gone, 'ana'])
-      eq(`${gone} is retired`, [g.code !== 0, /not found/i.test(g.out)], [true, true])
-    }
-    turns.push({n: 1, message: 'hello', answers: {a: 'A-text', b: 'B-text'}})
-    let r
+    const g = await run(['causes', 'ana'])
+    eq('causes is removed', [g.code !== 0, /not found/i.test(g.out)], [true, true])
+    let r = await run(['fidelity:start', 'ana'])
+    eq('fidelity:start names the next step', /run:\s+r1[\s\S]*fidelity:turn r1 -m/.test(r.out), true)
+    r = await run(['fidelity:start', 'bare'])
+    eq('fidelity:start: nothing compiled gets a hint', /Add a source with: faces compile:upload bare --file/.test(r.out), true)
+    r = await run(['fidelity:turn', 'r1', '-m', 'slow'])
+    eq('fidelity:turn: a held refusal is an error', [r.code, /HTTP 502: the face could not answer/.test(r.out)], [2, true])
+    r = await run(['fidelity:turn', 'r1', '-m', 'hello'])
+    eq('fidelity:turn prints both answers', /a:\nA-text\n\nb:\nB-text/.test(r.out), true)
     r = await run(['fidelity:pick', 'r1', 'a'])
     eq('fidelity:pick finds the open turn', bodies.some((x) => x.startsWith('POST /v1/fidelity/r1/turns/1/choice {"pick":"a"}')), true)
     r = await run(['fidelity:pick', 'r1', 'b'])
-    eq('fidelity:pick with no answers says turns are retired', /Turn 2 has no answers to pick from, and new turns are retired/.test(r.out), true)
-    turns.push({n: 2, message: 'again', answers: {a: 'A-text', b: 'B-text'}})
+    eq('fidelity:pick before a message says so', /Turn 2 has no answers to pick from yet/.test(r.out), true)
+    await run(['fidelity:turn', 'r1', '-m', 'again'])
     r = await run(['fidelity:pick', 'r1', 'b', '--correction', 'what I would say'])
     eq('fidelity:pick sends the correction', bodies.some((x) => x.includes('/turns/2/choice {"pick":"b","correction":"what I would say"}')), true)
     eq('fidelity:pick: the final score', /Finished\. Fidelity: 1\.7 out of 10/.test(r.out), true)
@@ -1397,6 +1367,8 @@ async function fidelityFlow() {
     eq('fidelity:get reveals the face once done', /turn 1: picked a, the face, accepted, scored 1\n\s+turn 2: picked b, the competitor, corrected, scored 0\.7/.test(r.out), true)
     r = await run(['fidelity:save-thread', 'r1'])
     eq('fidelity:save-thread names the compile', /Saved as thread t9\nCompile it into the face: faces compile:thread:make t9/.test(r.out), true)
+    r = await run(['fidelity:run', 'ana'])
+    eq('fidelity:run needs a terminal', /needs a person at a terminal/.test(r.out), true)
   } finally {
     srv.close()
     fs.rmSync(home, {recursive: true, force: true})
@@ -1482,12 +1454,12 @@ async function heldChatOverHttp() {
     for (const [endpoint, body] of cases) {
       reply = JSON.stringify(body)
       let caught
-      try { await postChat(client, endpoint, {model: 'ada@x'}) } catch (e) { caught = e }
+      try { await postChat(client, endpoint, {model: '@ada:maestro-1/x'}) } catch (e) { caught = e }
       eq(`held ${endpoint}: thrown as a 504`, [caught instanceof FacesAPIError, caught?.statusCode, caught?.message], [true, 504, TIMEOUT])
-      eq(`held ${endpoint}: hint`, faceRefusalHint(caught, 'ada@x'), 'The face did not finish within 300 seconds. Ask again.')
+      eq(`held ${endpoint}: hint`, faceRefusalHint(caught, '@ada:maestro-1/x'), 'The face did not finish within 300 seconds. Ask again.')
     }
     reply = JSON.stringify({object: 'chat.completion', choices: [{message: {content: 'hi'}}], usage: {total_tokens: 3}})
-    const ok = await postChat(client, '/v1/chat/completions', {model: 'ada@x'})
+    const ok = await postChat(client, '/v1/chat/completions', {model: '@ada:maestro-1/x'})
     eq('held answer read through the spaces', [ok.data.choices[0].message.content, ok.headers['x-faces-held'], ok.headers['x-faces-cost-usd']], ['hi', '1', undefined])
   } finally {
     srv.close()
@@ -1607,15 +1579,32 @@ eq('item lines: an invalidated decision says so',
   ['ci_8   alice (jev-1) decided: Move? -> 0.65   [invalidated, because afford]'])
 
 // --- choices: the face's options, or the question it would ask ----------------
-eq('choices view: the @ is added once', [asView('alice'), asView('@alice'), asView(' head:socrates '), asView('(a | b)')], ['@alice', '@alice', '@head:socrates', '@(a | b)'])
-eq('choices lines: numbered options and usage', choicesLines({object: 'choices', view: '@alice', model: 'maestro-1',
+eq('model: upstream alone', parseModel('@alice:maestro-1'), {upstream: '@alice:maestro-1', faces: '@alice', maestro: 'maestro-1', downstream: undefined})
+eq('model: the downstream id is verbatim after the first /', parseModel('@alice:maestro-1/google/gemma-4-31b-it').downstream, 'google/gemma-4-31b-it')
+eq('model: a downstream with its own @', parseModel('@dana~alice:maestro-1-flash/glm-5.3@rev2'), {upstream: '@dana~alice:maestro-1-flash', faces: '@dana~alice', maestro: 'maestro-1-flash', downstream: 'glm-5.3@rev2'})
+eq('model: a composite', parseModel('(@a | @b) - @c:maestro-1/gpt-5.4').faces, '(@a | @b) - @c')
+eq('model: no maestro is not ours', parseModel('@cf/meta/llama'), {downstream: '@cf/meta/llama'})
+eq('model problem: face@model shows the new form', modelProblem('alice@gpt-5.4', 'both'), 'face@model is gone: write @alice:maestro-1/gpt-5.4')
+eq('model problem: no maestro', modelProblem('@alice/gpt-5.4', 'both'), 'Name the maestro after the face: @alice:maestro-1/gpt-5.4')
+eq('model problem: a plain model', modelProblem('gpt-5.4', 'both'), 'Add a face: @<face>:maestro-1/gpt-5.4')
+eq('model problem: a bare name may be a face', modelProblem('alice', 'both'), 'Add a face: @<face>:maestro-1/alice, or, if alice is a face, @alice:maestro-1/<model>')
+eq('model problem: chat needs a downstream', /@alice:maestro-1\/<model>/.test(modelProblem('@alice:maestro-1', 'both') ?? ''), true)
+eq('model problem: choices takes the upstream alone', /upstream model alone/.test(modelProblem('@alice:maestro-1/gpt-5.4', 'upstream') ?? ''), true)
+eq('model problem: a bare face on choices', modelProblem('alice', 'upstream'), 'Write the face as @alice:maestro-1')
+eq('model problem: fine', [modelProblem('@alice:maestro-1', 'upstream'), modelProblem('(@a|@b):maestro-1-flash/jev-latest', 'both')], [undefined, undefined])
+eq('face: @ added once', [asFace('alice'), asFace('@alice'), asFace('(@a | @b)')], ['@alice', '@alice', '(@a | @b)'])
+eq('chat payload: messages', chatPayload('/v1/messages', 'm', [{role: 'user', content: 'hi'}], {stream: false, system: 's'}), {model: 'm', messages: [{role: 'user', content: 'hi'}], max_tokens: 1024, stream: false, system: 's'})
+eq('chat payload: responses', chatPayload('/v1/responses', 'm', [{role: 'user', content: 'hi'}], {stream: true, maxTokens: 50, compaction: 'c'}), {model: 'm', input: [{role: 'user', content: 'hi'}], stream: true, max_output_tokens: 50, compaction: 'c'})
+eq('chat payload: completions in a state', chatPayload('/v1/chat/completions', 'm', [{role: 'user', content: 'hi'}], {stream: false, turn: {conversation: 'fs_1'}, oauthOnly: true}), {model: 'm', messages: [{role: 'user', content: 'hi'}], stream: false, conversation: 'fs_1', oauth_only: true})
+eq('reply text by endpoint', [replyText({choices: [{message: {content: 'a'}}]}, '/v1/chat/completions'), replyText({output: [{content: [{type: 'output_text', text: 'b'}]}]}, '/v1/responses'), replyText({content: [{type: 'text', text: 'c'}]}, '/v1/messages')], ['a', 'b', 'c'])
+eq('choices lines: numbered options and usage', choicesLines({object: 'choices', model: '@alice:maestro-1',
   choices: [{name: 'Take the offer', description: 'It pays in time.'}, {name: 'Negotiate'}], usage: {input_tokens: 1243, output_tokens: 250}}), [
-  '1. Take the offer', '   It pays in time.', '2. Negotiate', '', 'maestro-1: 1,243 input, 250 output tokens'])
-eq('choices lines: the question it would ask', choicesLines({object: 'choices.question', view: '@alice', question: 'Why?', alternatives: ['How?']}), [
+  '1. Take the offer', '   It pays in time.', '2. Negotiate', '', '@alice:maestro-1: 1,243 input, 250 output tokens'])
+eq('choices lines: the question it would ask', choicesLines({object: 'choices.question', model: '@alice:maestro-1', question: 'Why?', alternatives: ['How?']}), [
   '@alice would ask: Why?', '', 'Or:', '  - How?', '', 'Ask it with --question to get the options.'])
-eq('choices hint: a long situation goes in a state', /faces state:create[\s\S]*--state-id/.test(choicesHint(422, 'This description is 5201 tokens; version 23 reads prose of at most 3,000.', '@alice')), true)
-eq('choices hint: nothing compiled names the upload', choicesHint(409, '@alice has nothing compiled, so ...', '@alice'), 'Give it a first source: faces compile:upload alice --file <file>.')
-eq('choices hint: another 422 adds nothing', choicesHint(422, '`view` is required', '@alice'), undefined)
+eq('choices hint: a long situation goes in a state', /faces state:create[\s\S]*--state-id/.test(choicesHint(422, 'This description is 5201 tokens; version 23 reads prose of at most 3,000.', '@alice:maestro-1')), true)
+eq('choices hint: nothing compiled names the upload', choicesHint(409, '@alice has nothing compiled, so ...', '@alice:maestro-1'), 'Give it a first source: faces compile:upload alice --file <file>.')
+eq('choices hint: another 422 adds nothing', choicesHint(422, '`model` is required', '@alice:maestro-1'), undefined)
 eq('conversation hint: a new premise names the flag to add',
   conversationHint(new FacesAPIError(422, "premise 'rates' is new: give its `description` (what it means, in plain words)")),
   'Say what it means: --premise-description rates="what it means, in plain words"')
@@ -1641,7 +1630,7 @@ async function conversationsOverHttp() {
       if (req.url === '/v1/states/gone') return send(404, {detail: 'no such conversation, or it has expired'})
       if (req.url === '/v1/states/any/compact') {
         if (!body?.model) return send(422, {detail: 'this conversation takes any face: name the one to compact in `model`'})
-        return send(200, {object: 'cause.compaction', compaction_id: 'fcmp_1', cause: 'Position.', turns: 2})
+        return send(200, {object: 'cause.compaction', compaction_id: 'fcmp_1', turns: 2})
       }
       if (req.url === '/v1/states/fs_1/items' && req.method === 'POST') {
         return send(200, {object: 'list', data: [], premises: {vendor_certified: {value: false, description: 'certified', status: 'invalidated'}},
@@ -1649,13 +1638,12 @@ async function conversationsOverHttp() {
           status_changes: [{kind: 'premise', key: 'vendor_certified', from: 'stated', to: 'invalidated', because: null}]})
       }
       if (req.url === '/v1/states/fs_1' && req.method === 'DELETE') return send(200, {id: 'fs_1', object: 'conversation.deleted', deleted: true})
-      if (req.url === '/v1/causes') return send(200, {cause: 'Because.'})
       if (req.url === '/v1/choices') {
-        if (body?.view === '@bare') return send(409, {detail: '@bare has nothing compiled, so version 23 has nothing to propose from. Compile a source for it. Nothing was charged.'})
-        if (!body?.instructions) return send(200, {object: 'choices.question', view: body?.view, model: body?.model, question: 'Why?', alternatives: [], usage: {input_tokens: 5, output_tokens: 2}})
-        return send(200, {object: 'choices', view: body?.view, model: body?.model, choices: [{name: 'Go', description: 'Now.'}], usage: {input_tokens: 5, output_tokens: 2}})
+        if (body?.model === '@bare:maestro-1') return send(409, {detail: '@bare has nothing compiled, so version 23 has nothing to propose from. Compile a source for it. Nothing was charged.'})
+        if (!body?.instructions) return send(200, {object: 'choices.question', model: body?.model, question: 'Why?', alternatives: [], usage: {input_tokens: 5, output_tokens: 2}})
+        return send(200, {object: 'choices', model: body?.model, choices: [{name: 'Go', description: 'Now.'}], usage: {input_tokens: 5, output_tokens: 2}})
       }
-      if (req.url === '/v1/systemone') return send(200, {model: 'alice@jev-1', answers: {move: {probability: 0.6}}, cause: 'c', causes: {move: 'c'}, decision_ids: {move: 'dec_9'}})
+      if (req.url === '/v1/systemone') return send(200, {model: '@alice:maestro-1/jev-latest', answers: {move: {probability: 0.6}}, decision_ids: {move: 'dec_9'}})
       if (req.url.startsWith('/v1/models')) return send(200, {data: []})
       if (req.url === '/v1/chat/completions') return send(200, {object: 'chat.completion', choices: [{message: {content: 'ok'}}]})
       send(404, {detail: 'not here'})
@@ -1675,10 +1663,10 @@ async function conversationsOverHttp() {
     eq('conversation:create: any face reads as such', /face:\s+any of your faces/.test(r.out), true)
     await run(['conversation:create', 'alice', '--no-causes-visible', '-m', 'hi', '--premise', 'a=1', '--premise-description', 'a=the budget'])
     eq('conversation:create: face, causes hidden, premises then messages', last('/v1/states'),
-      {causes_visible: false, model: 'alice', items: [{key: 'a', value: 1, description: 'the budget'}, {type: 'message', role: 'user', content: 'hi'}]})
+      {causes_visible: false, model: '@alice', items: [{key: 'a', value: 1, description: 'the budget'}, {type: 'message', role: 'user', content: 'hi'}]})
     seen.length = 0
-    r = await run(['conversation:create', 'alice@gpt-x'])
-    eq('conversation:create: a model is refused before sending', [r.code, /face alone: alice/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['conversation:create', '@alice:maestro-1/gpt-x'])
+    eq('conversation:create: a model is refused before sending', [r.code, /face alone, with no maestro or model: @alice/.test(r.out), seen.length], [2, true, 0])
     r = await run(['conversation:add', 'fs_1', '--premise', 'vendor_certified=false'])
     eq('conversation:add: sent as items', last('/v1/states/fs_1/items'), {items: [{key: 'vendor_certified', value: false}]})
     eq('conversation:add: decisions under old values, readably',
@@ -1691,48 +1679,66 @@ async function conversationsOverHttp() {
     r = await run(['conversation:get', 'gone'])
     eq('conversation:get: 404 says how to start another', /faces state:create/.test(r.out), true)
     r = await run(['conversation:compact', 'any'])
-    eq('conversation:compact: any-face 422 says to name the face', /faces state:compact any <face>/.test(r.out), true)
-    await run(['conversation:compact', 'any', 'alice'])
-    eq('conversation:compact: the face is sent', last('/v1/states/any/compact'), {model: 'alice'})
+    eq('conversation:compact: any-face 422 says to name the face', /faces state:compact any @<face>/.test(r.out), true)
+    r = await run(['conversation:compact', 'any', 'alice'])
+    eq('conversation:compact: the face is sent', last('/v1/states/any/compact'), {model: '@alice'})
+    eq('conversation:compact: no cause printed, the next step is chat', [/Position/.test(r.out), /faces chat:chat @alice:maestro-1\/<model> --compaction fcmp_1/.test(r.out)], [false, true])
     r = await run(['conversation:close', 'fs_1', '--yes', '--json'])
     eq('conversation:close: the server\'s answer', JSON.parse(r.out).deleted, true)
 
-    await run(['causes', 'alice', '-m', 'Now?', '--conversation', 'fs_1', '--premise', 'a=1', '--premise-description', 'a=x'])
-    eq('causes: conversation and premises sent, causes_visible left out', last('/v1/causes'),
-      {model: 'alice', messages: [{role: 'user', content: 'Now?'}], conversation: 'fs_1', premises: [{key: 'a', value: 1, description: 'x'}]})
-    await run(['causes', 'alice', '-m', 'Now?', '--session', 'fs_1', '--no-causes-visible'])
-    eq('causes: --session still sent as session', last('/v1/causes'), {model: 'alice', messages: [{role: 'user', content: 'Now?'}], session: 'fs_1', causes_visible: false})
+    await run(['chat:chat', '@alice:maestro-1/gpt-x', '-m', 'one', '--conversation', 'fs_1', '--no-causes-visible', '--json'])
+    eq('chat:chat: model, state and causes_visible sent', [last('/v1/chat/completions').model, last('/v1/chat/completions').conversation, last('/v1/chat/completions').causes_visible], ['@alice:maestro-1/gpt-x', 'fs_1', false])
     seen.length = 0
-    r = await run(['causes', 'alice', '-m', 'Now?', '--premise', 'a=1'])
-    eq('causes: premises without a conversation are refused before sending', [r.code, /belong to a state/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['chat:chat', 'alice@gpt-x', '-m', 'one'])
+    eq('chat:chat: face@model is refused before sending', [r.code, /@alice:maestro-1\/gpt-x/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['chat:chat', '@alice:maestro-1', '-m', 'one'])
+    eq('chat:chat: the upstream model alone is refused before sending', [r.code, /after the maestro/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['chat:chat', '@alice:maestro-1/gpt-x', '-m', 'one', '--style', 'email'])
+    eq('chat:chat: --style is gone', [r.code !== 0, /Nonexistent flag/i.test(r.out)], [true, true])
+    let t = await run(['chat:thread', '@alice:maestro-1/gpt-x', '-m', 'first', '--json'])
+    const tid = JSON.parse(t.out).thread_id
+    await run(['chat:thread', '--id', tid, '-m', 'second', '--json'])
+    eq('thread: without a state, the whole thread is sent', last('/v1/chat/completions').messages.map((m) => m.content), ['first', 'ok', 'second'])
+    await run(['chat:thread', '--id', tid, '-m', 'third', '--conversation', 'fs_1', '--premise', 'a=2', '--json'])
+    const sent = last('/v1/chat/completions')
+    eq('thread: in a state, only the new message', [sent.messages.map((m) => m.content), sent.conversation, sent.premises, sent.model], [['third'], 'fs_1', [{key: 'a', value: 2}], '@alice:maestro-1/gpt-x'])
+    t = spawnSync(process.execPath, ['bin/run.js', 'chat:thread', '--id', '../config', '--delete'], {env: {...process.env, HOME: home}, encoding: 'utf8'})
+    eq('thread id: a path is refused', t.status !== 0, true)
 
     r = await run(['state:add', 'fs_1', '--premise', 'vendor_certified=false', '--premise-status', 'vendor_certified=invalidated'])
     eq('state:add: status sent with the premise', last('/v1/states/fs_1/items'), {items: [{key: 'vendor_certified', value: false, status: 'invalidated'}]})
     eq('state:add: status changes printed', /1 status changed:\n\s+premise vendor_certified: stated -> invalidated/.test(r.out), true)
     r = await run(['state:create', 'alice'])
-    eq('state:create: the next step is choices', /faces choices alice --state-id fs_1/.test(r.out), true)
+    eq('state:create: the next step is choices', /faces choices @alice:maestro-1 --state-id fs_1/.test(r.out), true)
 
-    await run(['choices', 'alice', '--state', 'A chain opened.', '-q', 'What now?', '--max-choices', '3'])
-    eq('choices: view, model, state, question and max sent', last('/v1/choices'), {view: '@alice', model: 'maestro-1', state: 'A chain opened.', instructions: 'What now?', max_choices: 3})
-    r = await run(['choices', '@alice', '--state-id', 'fs_1', '--model', 'maestro-1-flash'])
-    eq('choices: a state id alone, flash, no question', last('/v1/choices'), {view: '@alice', model: 'maestro-1-flash', state_id: 'fs_1'})
+    await run(['choices', '@alice:maestro-1', '--state', 'A chain opened.', '-q', 'What now?', '--max-choices', '3'])
+    eq('choices: model, state, question and max sent', last('/v1/choices'), {model: '@alice:maestro-1', state: 'A chain opened.', instructions: 'What now?', max_choices: 3})
+    r = await run(['choices', '@alice:maestro-1-flash', '--state-id', 'fs_1'])
+    eq('choices: a state id alone, flash, no question', last('/v1/choices'), {model: '@alice:maestro-1-flash', state_id: 'fs_1'})
     eq('choices: the question it would ask is printed', /@alice would ask: Why\?/.test(r.out), true)
     seen.length = 0
-    r = await run(['choices', 'alice'])
+    r = await run(['choices', '@alice:maestro-1'])
     eq('choices: no situation is refused before sending', [r.code, /Describe the situation/.test(r.out), seen.length], [2, true, 0])
-    r = await run(['choices', 'alice@gpt-x', '--state', 'x'])
-    eq('choices: a model after the face is refused before sending', [r.code, /Name the face alone/.test(r.out), seen.length], [2, true, 0])
-    r = await run(['choices', 'alice', '--state', 'x', '--model', 'gpt-x'])
-    eq('choices: an unknown model is refused before sending', [r.code !== 0, seen.length], [true, 0])
-    r = await run(['choices', 'bare', '--state', 'x', '-q', 'y'])
+    r = await run(['choices', '@alice:maestro-1/gpt-x', '--state', 'x'])
+    eq('choices: a downstream model is refused before sending', [r.code, /upstream model alone/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['choices', 'alice', '--state', 'x'])
+    eq('choices: the old face form is refused before sending', [r.code, /@alice:maestro-1/.test(r.out), seen.length], [2, true, 0])
+    r = await run(['choices', '@alice:maestro-1', '--state', 'x', '--model', 'maestro-1-flash'])
+    eq('choices: --model is gone', [r.code !== 0, seen.length], [true, 0])
+    r = await run(['choices', '@bare:maestro-1', '--state', 'x', '-q', 'y'])
     eq('choices: 409 names the upload', /HTTP 409[\s\S]*faces compile:upload bare --file/.test(r.out), true)
 
-    r = await run(['decide', 'alice', '--state', 'Lease.', '--question', 'Move?', '--conversation', 'fs_1', '--depends-on', 'afford, dec_1'])
+    r = await run(['decide', '@alice:maestro-1/jev-latest', '--state', 'Lease.', '--question', 'Move?', '--conversation', 'fs_1', '--depends-on', 'afford, dec_1'])
     eq('decide: depends_on sent in a state', last('/v1/systemone').depends_on, ['afford', 'dec_1'])
+    eq('decide: the whole model sent', last('/v1/systemone').model, '@alice:maestro-1/jev-latest')
     eq('decide: decision ids printed', /decision id \(move\): dec_9/.test(r.out), true)
     seen.length = 0
-    r = await run(['decide', 'alice', '--state', 'Lease.', '--question', 'Move?', '--depends-on', 'afford'])
+    r = await run(['decide', '@alice:maestro-1/jev-latest', '--state', 'Lease.', '--question', 'Move?', '--depends-on', 'afford'])
     eq('decide: depends_on without a state is refused before sending', [r.code, /belongs to a state/.test(r.out), seen.filter((x) => x.url === '/v1/systemone').length], [2, true, 0])
+    r = await run(['decide', 'alice', '--state', 'Lease.', '--question', 'Move?'])
+    eq('decide: the old face form is refused before sending', [r.code, /@alice:maestro-1/.test(r.out)], [2, true])
+    r = await run(['decide', '@alice:maestro-1/jev-latest', '--state', 'Lease.'])
+    eq('decide: a question is needed', [r.code, /Ask at least one question/.test(r.out)], [2, true])
   } finally {
     srv.close()
     fs.rmSync(home, {recursive: true, force: true})

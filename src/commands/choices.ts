@@ -1,22 +1,26 @@
 import {Args, Flags} from '@oclif/core'
 import {BaseCommand} from '../base.js'
 import {FacesAPIError} from '../client.js'
-import {CHOICES_MODELS, CHOICES_PATH, MAX_CHOICES, asView, choicesHint, choicesLines, type ChoicesResponse} from '../choices.js'
+import {CHOICES_PATH, MAX_CHOICES, choicesHint, choicesLines, type ChoicesResponse} from '../choices.js'
+import {modelProblem} from '../model.js'
 import {heldDecisionError, readStateFlags} from '../decisions.js'
 import {retryOnceOnWarmUp, sayWarmUp} from '../utils.js'
 
 export default class Choices extends BaseCommand {
   static description =
-    'Ask a face what it would do (POST /v1/choices). Describe the situation with --state (prose, at most ' +
+    'Ask a face what it would do (POST /v1/choices). Name the upstream model, a face and its maestro: ' +
+    '@alice:maestro-1, @dana~alice:maestro-1 for a face shared with you, or a composite such as ' +
+    '"(@alice | @bob):maestro-1". maestro-1-flash answers sooner and costs 10 times more. ' +
+    'Describe the situation with --state (prose, at most ' +
     '3,000 tokens) or --state-id (a state from faces state:create), ask with --question, and the face proposes ' +
     'the options it would weigh, strongest first. Leave --question out and it proposes the question it would ask. ' +
-    'Billed on the tokens it processes (see faces models:list --kind choices). Takes about 10 to 30 seconds.'
+    'Billed on the tokens it processes (see faces models:list --kind upstream). Takes about 10 to 30 seconds.'
 
   static examples = [
-    '<%= config.bin %> <%= command.id %> alice --state "A startup offers me a lead role at a lower salary." --question "Should I take the offer?"',
-    '<%= config.bin %> <%= command.id %> head:socrates --state "A chain bakery opened across the street."',
-    '<%= config.bin %> <%= command.id %> alice --state-id fs_STATE_ID --question "What should the shop do?" --max-choices 3',
-    '<%= config.bin %> <%= command.id %> "(alice | bob)" --state-file situation.txt -q "What next?" --model maestro-1-flash --json',
+    '<%= config.bin %> <%= command.id %> @alice:maestro-1 --state "A startup offers me a lead role at a lower salary." --question "Should I take the offer?"',
+    '<%= config.bin %> <%= command.id %> @head~socrates:maestro-1 --state "A chain bakery opened across the street."',
+    '<%= config.bin %> <%= command.id %> @alice:maestro-1 --state-id fs_STATE_ID --question "What should the shop do?" --max-choices 3',
+    '<%= config.bin %> <%= command.id %> "(@alice | @bob):maestro-1-flash" --state-file situation.txt -q "What next?" --json',
   ]
 
   static flags = {
@@ -29,13 +33,14 @@ export default class Choices extends BaseCommand {
         'A state (from faces state:create) as the situation. With --state, the prose is an addendum for this call only: ' +
         'read with the state, never saved to it. Write anything that should persist with faces state:add --premise.',
     }),
-    model: Flags.string({description: 'The choices model. maestro-1-flash answers sooner and costs 10 times more when a question is asked.', options: [...CHOICES_MODELS], default: CHOICES_MODELS[0]}),
     'max-choices': Flags.integer({description: `The most options to return, 1 to ${MAX_CHOICES}. Default 8.`, min: 1, max: MAX_CHOICES}),
   }
 
   static args = {
-    face: Args.string({
-      description: 'The face: an alias, owner:alias for a face shared with you or a system face, or a composite such as "(a | b)". A leading @ is optional.',
+    model: Args.string({
+      description:
+        'The upstream model: @<face>:<maestro>, e.g. @alice:maestro-1. Another account\'s face is @owner~face; ' +
+        'a composite is "(@a | @b):maestro-1" (operators | & - ^). No model after it: on choices the upstream model answers.',
       required: true,
     }),
   }
@@ -44,10 +49,11 @@ export default class Choices extends BaseCommand {
     const {args, flags} = await this.parse(Choices)
     const client = this.makeClient(flags)
     const json = this.jsonEnabled()
-    const view = asView(args.face)
-    if (view.includes('@', 1)) this.error(`Name the face alone, with no model after it: ${view.slice(0, view.indexOf('@', 1))}. Pick the choices model with --model.`)
+    const model = args.model.trim()
+    const problem = modelProblem(model, 'upstream')
+    if (problem) this.error(problem)
 
-    const body: Record<string, unknown> = {view, model: flags.model}
+    const body: Record<string, unknown> = {model}
     const fail = (m: string): never => this.error(m)
     if (flags.state !== undefined || flags['state-file'] !== undefined) {
       const state = readStateFlags(flags, fail)
@@ -74,7 +80,7 @@ export default class Choices extends BaseCommand {
       }, json ? undefined : sayWarmUp)) as ChoicesResponse
     } catch (err) {
       if (err instanceof FacesAPIError) {
-        const hint = choicesHint(err.statusCode, err.message, view)
+        const hint = choicesHint(err.statusCode, err.message, model)
         this.error(`HTTP ${err.statusCode}: ${err.message}${hint ? `\n${hint}` : ''}`)
       }
       throw err

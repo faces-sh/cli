@@ -8,7 +8,7 @@ export default class GroupAdd extends BaseCommand {
 
   static description =
     'Add face(s) to a group. Any face this account can reach may join: your own, a published one, or one ' +
-    'shared with you. Name someone else\'s as owner:alias, the same address chat uses.'
+    'shared with you. Name someone else\'s as owner:alias.'
 
   static flags = {
     ...BaseCommand.baseFlags,

@@ -20,7 +20,7 @@ export default class CatalogDoctor extends BaseCommand {
     ...BaseCommand.baseFlags,
     fix: Flags.boolean({description: 'Rebuild missing or stale catalog entries from API', default: false}),
     generate: Flags.boolean({
-      description: 'Retired: descriptions were written by chatting with each face, and chat is retired. Write one with faces face:edit <alias> --description.',
+      description: 'Retired. Write a description with faces face:edit <alias> --description.',
       default: false,
       hidden: true,
     }),
@@ -32,7 +32,7 @@ export default class CatalogDoctor extends BaseCommand {
     // Refuse before any request, so nobody is charged who did not mean to be.
     if (flags.generate) {
       this.error(
-        '--generate wrote descriptions by chatting with each face, and chat is retired. Nothing was sent.\n' +
+        '--generate is retired. Nothing was sent.\n' +
           'Write a description with: faces face:edit <alias> --description "..."\n' +
           'To repair the catalog, which is free: faces catalog:doctor --fix',
       )

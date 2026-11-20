@@ -198,7 +198,7 @@ export function refusalGuidance(status: number, errorCode: string | undefined, m
 /**
  * The sentence inside an OAuth refusal's `detail`.
  *
- * Those arrive wrapped as `{detail: {error, detail, upstream_status}}`, and the
+ * Those arrive wrapped as `{detail: {error, detail, provider_status}}`, and the
  * inner `detail` is often the provider's own JSON body as a string. Printed
  * whole, the one useful sentence sits three escapes deep in a blob.
  */

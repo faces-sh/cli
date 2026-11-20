@@ -1,7 +1,7 @@
 {
   "name": "@faces-sh/cli",
-  "version": "1.1.0",
-  "description": "CLI for Faces: compile causal models from source texts, and ask them what they would do",
+  "version": "1.2.0",
+  "description": "CLI for Faces: compile causal models from source texts, ask them what they would do, and chat with them on any model",
   "type": "module",
   "author": "Headwaters Lab Inc.",
   "license": "MIT",
@@ -50,6 +50,9 @@
       },
       "face": {
         "description": "Create and manage faces"
+      },
+      "chat": {
+        "description": "Chat with a face on any chat model: @face:maestro-1/<model>"
       },
       "compile": {
         "description": "Compile source texts into a face"
@@ -100,7 +103,7 @@
         "description": "Your plan: show, subscribe, switch and cancel"
       },
       "fidelity": {
-        "description": "Fidelity runs made before chat was retired: read, pick and save"
+        "description": "Fidelity runs: start, turn, pick, read and save"
       },
       "benchmark": {
         "description": "Compare a face against a reference model on its own material"

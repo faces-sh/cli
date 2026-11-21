@@ -71,6 +71,7 @@ faces compile:upload / import / all / status / stats
 faces style:upload / make / status / versions / revert / delete
 
 faces models:list                 # the models you can name; --kind takes a list, or all
+faces media:list                  # the media a document can be, with what each covers
 faces benchmark:start / get / list
 faces fidelity:start / turn / pick / get / run / save-thread
 
@@ -106,6 +107,9 @@ it with `--kind thread` and `--face-speaker` naming the face, so only the face's
 faces compile:upload alice --file interview.txt --kind thread --face-speaker Alice
 faces compile:upload alice --file podcast.mp3 --kind thread --face-speaker A
 ```
+
+A document's `--medium` is one of the 25 media `faces media:list` shows, each with what it
+covers: a keynote is a `speech`, a diary a `journal entry`. A subcategory is not accepted.
 
 A labelled dialogue uploaded as a document is read as entirely the face's own words, other
 speakers included. The document commands warn when a text file reads as a transcript.

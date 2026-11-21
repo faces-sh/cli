@@ -64,6 +64,7 @@ import {score10} from '../dist/fidelity.js'
 import {resultLines, benchmarkHint} from '../dist/benchmark.js'
 import {conversationHint, parsePremises, parseDependsOn, premiseValue, conversationFields, clientItems, conversationLines, itemLines, premiseLines, staleDecisionLines, statusChangeLines} from '../dist/conversation.js'
 import {choicesLines, choicesHint} from '../dist/choices.js'
+import {mediaLines, mediaOf} from '../dist/media.js'
 import {parseModel, modelProblem, asFace} from '../dist/model.js'
 import {chatPayload, replyText} from '../dist/chat.js'
 
@@ -1578,6 +1579,17 @@ eq('item lines: an invalidated decision says so',
   itemLines([{id: 'ci_8', type: 'decision', face: 'alice', model: 'jev-1', question: {instructions: 'Move?'}, answer: {result: 0.65}, status: 'invalidated', because: 'afford'}]),
   ['ci_8   alice (jev-1) decided: Move? -> 0.65   [invalidated, because afford]'])
 
+// --- media: the kinds of writing, from GET /v1/media ---------------------------
+eq('media: read from data', mediaOf({object: 'list', data: [{name: 'speech'}]}), [{name: 'speech'}])
+eq('media: a bare list or nothing', [mediaOf([{name: 'poem'}]), mediaOf(null), mediaOf({data: 'x'})], [[{name: 'poem'}], [], []])
+eq('media lines: name, description, what it covers', mediaLines([
+  {name: 'speech', description: 'Spoken to an audience.', subcategories: ['keynote', 'toast']},
+  {name: 'other', description: 'None of the named forms.', subcategories: []}]), [
+  'MEDIUM  DESCRIPTION               COVERS',
+  'speech  Spoken to an audience.    keynote, toast',
+  'other   None of the named forms.'])
+eq('media lines: none', mediaLines([]), ['No media.'])
+
 // --- choices: the face's options, or the question it would ask ----------------
 eq('model: upstream alone', parseModel('@alice:maestro-1'), {upstream: '@alice:maestro-1', faces: '@alice', maestro: 'maestro-1', downstream: undefined})
 eq('model: the downstream id is verbatim after the first /', parseModel('@alice:maestro-1/google/gemma-4-31b-it').downstream, 'google/gemma-4-31b-it')
@@ -1644,6 +1656,7 @@ async function conversationsOverHttp() {
         return send(200, {object: 'choices', model: body?.model, choices: [{name: 'Go', description: 'Now.'}], usage: {input_tokens: 5, output_tokens: 2}})
       }
       if (req.url === '/v1/systemone') return send(200, {model: '@alice:maestro-1/jev-latest', answers: {move: {probability: 0.6}}, decision_ids: {move: 'dec_9'}})
+      if (req.url === '/v1/media') return send(200, {object: 'list', data: [{object: 'medium', name: 'speech', description: 'Spoken to an audience.', subcategories: ['keynote']}]})
       if (req.url.startsWith('/v1/models')) return send(200, {data: []})
       if (req.url === '/v1/chat/completions') return send(200, {object: 'chat.completion', choices: [{message: {content: 'ok'}}]})
       send(404, {detail: 'not here'})
@@ -1735,6 +1748,10 @@ async function conversationsOverHttp() {
     seen.length = 0
     r = await run(['decide', '@alice:maestro-1/jev-latest', '--state', 'Lease.', '--question', 'Move?', '--depends-on', 'afford'])
     eq('decide: depends_on without a state is refused before sending', [r.code, /belongs to a state/.test(r.out), seen.filter((x) => x.url === '/v1/systemone').length], [2, true, 0])
+    r = await run(['media:list'])
+    eq('media:list: a table', [/MEDIUM\s+DESCRIPTION\s+COVERS/.test(r.out), /speech\s+Spoken to an audience\.\s+keynote/.test(r.out)], [true, true])
+    r = await run(['media:list', '--json'])
+    eq('media:list --json: the list', JSON.parse(r.out).data.map((m) => m.name), ['speech'])
     r = await run(['decide', 'alice', '--state', 'Lease.', '--question', 'Move?'])
     eq('decide: the old face form is refused before sending', [r.code, /@alice:maestro-1/.test(r.out)], [2, true])
     r = await run(['decide', '@alice:maestro-1/jev-latest', '--state', 'Lease.'])

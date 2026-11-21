@@ -14,7 +14,7 @@ export default class StyleUpload extends BaseCommand {
     'for plaintextBody. The server lists every problem with a refused line, and the fields it accepts. ' +
     'Upload ONE medium per file: a file mixing, say, email and ' +
     'text messages produces threads with no medium at all, which no style can be built from. A message that declares ' +
-    'its own `kind` must spell one of the eleven media exactly; an unknown one is refused, naming the ' +
+    'its own `kind` must spell one of the media in faces media:list exactly; an unknown one is refused, naming the ' +
     'message that carried it. The file is passed through as written, so this is the server answering.'
 
   static examples = [

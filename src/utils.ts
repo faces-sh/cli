@@ -519,20 +519,18 @@ export function isMaxTokensRenameError(message: string): boolean {
 }
 
 /**
- * The eleven values, spelled exactly. Whether omitting one is allowed depends
- * on the command.
+ * The media, by name. The full list, with what each covers, is GET /v1/media
+ * (faces media:list), so it is read from there rather than repeated here.
  *
- * The parentheses describe which value to reach for; they are not spellings
- * that work. `transcript`, `keynote`, `sms` and the other 32 aliases used to
- * fold and are now each a 422, so naming them as inputs here would be sending
+ * A subcategory is not a spelling that works: `keynote`, `sms` and the like are
+ * each a 422 naming every medium, so naming them as inputs here would be sending
  * people into one.
  */
 const MEDIUM_LIST =
-  'What sort of writing this is, spelled exactly: email, text message, social post, essay, ' +
-  'academic paper, blog post, legal document, thread reply, conversation, lecture, other. ' +
-  'Reach for lecture for sustained speech nobody interrupts (a talk, a sermon, a keynote), and ' +
-  'other for writing that is none of the named forms, read as prose with no form-specific ' +
-  'conventions assumed. Those descriptions are not accepted inputs: send the value itself.'
+  'What sort of writing this is, spelled exactly as faces media:list names it: email, essay, speech, ' +
+  'journal entry, script and the rest (25 in all). A subcategory such as keynote is not a medium: send ' +
+  'the medium it belongs to (speech). other is for writing that is none of the named forms, read as ' +
+  'prose with no form-specific conventions assumed.'
 
 /**
  * Said wherever a document is created: what belongs in one, and where an
@@ -568,7 +566,7 @@ export const MEDIUM_REQUIRED_DESCRIPTION =
   ' ' + DOCUMENT_VS_THREAD +
   ' A document cannot be saved without saying what it is, so this is required rather than ' +
   'optional. Here the spelling is held to exactly: case and surrounding spaces are forgiven and ' +
-  'nothing else is, so an unknown word is refused naming all eleven rather than being folded into ' +
+  'nothing else is, so an unknown word is refused naming every medium rather than being folded into ' +
   'a near match. Do not guess one: a wrong medium is not flagged afterwards. If none of the ' +
   'named forms fit, that is what other is for. If one of them ' +
   'does fit and you simply have not been told which, ask.'
@@ -584,8 +582,7 @@ export const MEDIUM_REQUIRED_DESCRIPTION =
  */
 export const MEDIUM_MISSING_MESSAGE =
   'Say what this writing is with --medium: a document cannot be saved without one.\n' +
-  'One of: email, text message, social post, essay, academic paper, blog post, legal document, ' +
-  'thread reply, conversation, lecture, other.\n' +
+  'One of the media faces media:list names (email, essay, speech, journal entry, script and the rest).\n' +
   '`other` is for writing that is none of those: it compiles, and is read as prose with no ' +
   'form-specific conventions assumed. It is the honest answer when nothing fits, and the wrong ' +
   'answer for a letter or a memo, which are forms with rules of their own.\n' +

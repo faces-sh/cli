@@ -98,7 +98,8 @@ export const PREMISE_STATUS_FLAG_DESCRIPTION =
   'set it to another status to restore them.'
 
 export const PREMISE_DEPENDS_ON_FLAG_DESCRIPTION =
-  'What a --premise rests on, as key=a,b (repeatable, one per key): premise keys and decision ids already in ' +
+  'What a --premise rests on, as key=a,b (repeatable, one per key): premise keys, decision ids and option ids ' +
+  '(opt_..., or cho_... for all of a choices list, from faces choices --state-id) already in ' +
   `the state or set in the same request, at most ${MAX_DEPENDS_ON}. key= with nothing after it clears it; ` +
   'left out, a newer value keeps what the key rested on before.'
 
@@ -160,7 +161,7 @@ export function conversationHint(err: FacesAPIError): string | undefined {
   const fresh = err.statusCode === 422 ? /premise '([A-Za-z0-9_-]{1,64})' is new/.exec(err.message) : null
   if (fresh) return `Say what it means: --premise-description ${fresh[1]}="what it means, in plain words"`
   if (err.statusCode === 422 && /depends_on` names no premise or decision/.test(err.message)) {
-    return 'Name premise keys and decision ids already in the state (faces state:items <id>), or premises set in the same request.'
+    return 'Name premise keys, decision ids and option ids already in the state (faces state:items <id>), or premises set in the same request.'
   }
   return undefined
 }
@@ -277,8 +278,9 @@ function setOneOf(seen: Map<string, Premise>, raws: string[], flag: string, fiel
 }
 
 /**
- * A comma-separated `depends_on`, as the API's list: premise keys and decision
- * ids, each once. Empty text is the empty list, which clears it. Throws with
+ * A comma-separated `depends_on`, as the API's list: premise keys, decision
+ * ids and option ids (`opt_...`, or `cho_...` for a whole choices list),
+ * each once. Empty text is the empty list, which clears it. Throws with
  * the sentence to show.
  */
 export function parseDependsOn(raw: string, flag = '--depends-on'): string[] {

@@ -105,7 +105,8 @@ export default class Decide extends BaseCommand {
     ...conversationTurnFlags(),
     'depends-on': Flags.string({
       description:
-        'In a state (--conversation), what this decision rests on, comma separated: premise keys and decision ids ' +
+        'In a state (--conversation), what this decision rests on, comma separated: premise keys, decision ids and ' +
+        'option ids (opt_..., or cho_... for all of a choices list, from faces choices --state-id) ' +
         `already in the state or set with --premise, at most ${MAX_DEPENDS_ON}. The decision is shown those, and is ` +
         'invalidated when one of them is. Left out, it rests on every premise in force.',
     }),

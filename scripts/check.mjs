@@ -1501,6 +1501,7 @@ eq('premises: descriptions matched by key, not position',
   [{key: 'a', value: 1, description: 'the budget'}, {key: 'b', value: false, description: 'the vendor is certified'}])
 const premiseError = (p, d) => { try { parsePremises(p, d); return undefined } catch (e) { return e.message } }
 const premiseError2 = (p, d, st, dep) => { try { parsePremises(p, d, st, dep); return '' } catch (e) { return e.message } }
+const premiseError2b = (p, roles, origins) => { try { parsePremises(p, [], [], [], roles, origins); return '' } catch (e) { return e.message } }
 eq('premises: no = is refused', /takes key=value \(got 'oops'\)/.test(premiseError(['oops'])), true)
 eq('premises: empty key is refused', /takes key=value/.test(premiseError(['=1'])), true)
 eq('premises: a key is plain text', parsePremises(['everyone can eat everything served=no', 'costs under $100?=yes', 'Resolve "can eat"=check']),
@@ -1539,6 +1540,18 @@ eq('turn fields: status and depends_on go with the premise',
   conversationFields({conversation: 'fs_1', premise: ['a=1', 'b=2'], 'premise-status': ['a=Assumed'], 'premise-depends-on': ['b=a, dec_1,a']}),
   {conversation: 'fs_1', premises: [{key: 'a', value: 1, status: 'assumed'}, {key: 'b', value: 2, depends_on: ['a', 'dec_1']}]})
 eq('premises: depends_on= clears it', parsePremises(['a=1'], [], [], ['a=']), [{key: 'a', value: 1, depends_on: []}])
+eq('premises: role and origin', parsePremises(['a=1', 'b=2'], [], [], [], ['a=Wanted'], ['a=human', 'b= tool ']),
+  [{key: 'a', value: 1, role: 'wanted', origin: 'human'}, {key: 'b', value: 2, origin: 'tool'}])
+eq('premises: role= and origin= clear them', parsePremises(['a=1'], [], [], [], ['a='], ['a=']), [{key: 'a', value: 1, role: null, origin: null}])
+eq('premises: a role other than wanted is refused', /--premise-role for 'a' is wanted, or a= to clear it \(got 'goal'\)/.test(premiseError2b(['a=1'], ['a=goal'], [])), true)
+eq('premises: an unknown origin is refused', /--premise-origin for 'a' is one of human, agent, tool, web/.test(premiseError2b(['a=1'], [], ['a=user'])), true)
+eq('premises: a role with no premise is refused', /--premise-role names 'b', which no --premise sets/.test(premiseError2b(['a=1'], ['b=wanted'], [])), true)
+eq('premises: two origins for one key are refused', /sets 'a' twice/.test(premiseError2b(['a=1'], [], ['a=human', 'a=agent'])), true)
+eq('turn fields: role and origin go with the premise',
+  conversationFields({conversation: 'fs_1', premise: ['a=1'], 'premise-role': ['a=wanted'], 'premise-origin': ['a=agent']}),
+  {conversation: 'fs_1', premises: [{key: 'a', value: 1, role: 'wanted', origin: 'agent'}]})
+eq('premise lines: role and origin', premiseLines({g: {value: 'ship', status: 'stated', role: 'wanted', origin: 'human'}}),
+  ['premises:', '  g = "ship"  [wanted; from human]'])
 eq('premises: an unknown status is refused', /is one of stated, verified, assumed, unresolved, invalidated \(got 'maybe'\)/.test(premiseError2(['a=1'], [], ['a=maybe'])), true)
 eq('premises: a status for no premise is refused', /names 'b', which no --premise sets/.test(premiseError2(['a=1'], [], ['b=verified'])), true)
 eq('premises: a premise resting on itself is refused', /cannot depend on itself/.test(premiseError2(['a=1'], [], [], ['a=a'])), true)

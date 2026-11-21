@@ -22,6 +22,7 @@ export default class Choices extends BaseCommand {
     '<%= config.bin %> <%= command.id %> @head~socrates:maestro-1 --state "A chain bakery opened across the street."',
     '<%= config.bin %> <%= command.id %> @alice:maestro-1 --state-id fs_STATE_ID --question "What should the shop do?" --max-choices 3',
     '<%= config.bin %> <%= command.id %> @alice:maestro-1 --state-id fs_STATE_ID --question "How do we get there?" --depends-on goal,budget',
+    '<%= config.bin %> <%= command.id %> @alice:maestro-1 --state-id fs_STATE_ID --question "What does \'handle bad input\' mean here?" --into "handle bad input" --kind or',
     '<%= config.bin %> <%= command.id %> "(@alice | @bob):maestro-1-flash" --state-file situation.txt -q "What next?" --json',
   ]
 
@@ -41,6 +42,20 @@ export default class Choices extends BaseCommand {
         `and choices ids (cho_...) in the state, at most ${MAX_DEPENDS_ON}. The face is shown each of them, and the ` +
         'premises each directly depends on, in full. The options written into the state record it.',
       dependsOn: ['state-id'],
+    }),
+    into: Flags.string({
+      description:
+        'With --state-id and --question: the premise these options are for. Each option is written into the state ' +
+        'as a premise of its own (assumed, proposed by the face), and the premise rests on each through an edge of ' +
+        '--kind. Weigh them next with faces decide --weigh <premise>.',
+      dependsOn: ['state-id', 'question'],
+    }),
+    kind: Flags.string({
+      description:
+        'With --into: or (the default) when the options are alternatives, readings of an ambiguity or ways to do ' +
+        'it, one of which holds; and when they are facets that must all hold.',
+      options: ['or', 'and'],
+      dependsOn: ['into'],
     }),
     'max-choices': Flags.integer({description: `The most options to return, 1 to ${MAX_CHOICES}. Default 8.`, min: 1, max: MAX_CHOICES}),
   }
@@ -85,6 +100,11 @@ export default class Choices extends BaseCommand {
       }
     }
     if (flags['max-choices'] !== undefined) body.max_choices = flags['max-choices']
+    if (flags.into !== undefined) {
+      if (flags.into.trim() === '') this.error('--into is empty: name a premise key of the state.')
+      body.into = flags.into.trim()
+      if (flags.kind) body.kind = flags.kind
+    }
 
     let data: ChoicesResponse
     try {

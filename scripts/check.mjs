@@ -62,6 +62,9 @@ import {pollCompileProgress, pollUntilPaused} from '../dist/poll.js'
 import {childPath} from '../dist/paths.js'
 import {score10} from '../dist/fidelity.js'
 import {resultLines, benchmarkHint} from '../dist/benchmark.js'
+import {parseWeightedDependsOn, entryText} from '../dist/conversation.js'
+import {pickParallel, nextLines, synopsisLines} from '../dist/synopsis.js'
+import {weighLines} from '../dist/commands/decide.js'
 import {conversationHint, parsePremises, parseDependsOn, premiseValue, conversationFields, clientItems, conversationLines, itemLines, premiseLines, staleDecisionLines, statusChangeLines} from '../dist/conversation.js'
 import {choicesLines, choicesHint} from '../dist/choices.js'
 import {mediaLines, mediaOf} from '../dist/media.js'
@@ -1543,7 +1546,7 @@ eq('premises: depends_on= clears it', parsePremises(['a=1'], [], [], ['a=']), [{
 eq('premises: role and origin', parsePremises(['a=1', 'b=2'], [], [], [], ['a=Wanted'], ['a=human', 'b= tool ']),
   [{key: 'a', value: 1, role: 'wanted', origin: 'human'}, {key: 'b', value: 2, origin: 'tool'}])
 eq('premises: role= and origin= clear them', parsePremises(['a=1'], [], [], [], ['a='], ['a=']), [{key: 'a', value: 1, role: null, origin: null}])
-eq('premises: a role other than wanted is refused', /--premise-role for 'a' is wanted, or a= to clear it \(got 'goal'\)/.test(premiseError2b(['a=1'], ['a=goal'], [])), true)
+eq('premises: a role other than wanted or test is refused', /--premise-role for 'a' is one of wanted, test, or a= to clear it \(got 'goal'\)/.test(premiseError2b(['a=1'], ['a=goal'], [])), true)
 eq('premises: an unknown origin is refused', /--premise-origin for 'a' is one of human, agent, tool, web/.test(premiseError2b(['a=1'], [], ['a=user'])), true)
 eq('premises: a role with no premise is refused', /--premise-role names 'b', which no --premise sets/.test(premiseError2b(['a=1'], ['b=wanted'], [])), true)
 eq('premises: two origins for one key are refused', /sets 'a' twice/.test(premiseError2b(['a=1'], [], ['a=human', 'a=agent'])), true)
@@ -1555,6 +1558,49 @@ eq('premise lines: role and origin', premiseLines({g: {value: 'ship', status: 's
 eq('premises: an unknown status is refused', /is one of stated, verified, assumed, unresolved, invalidated \(got 'maybe'\)/.test(premiseError2(['a=1'], [], ['a=maybe'])), true)
 eq('premises: a status for no premise is refused', /names 'b', which no --premise sets/.test(premiseError2(['a=1'], [], ['b=verified'])), true)
 eq('premises: a premise resting on itself is refused', /cannot depend on itself/.test(premiseError2(['a=1'], [], [], ['a=a'])), true)
+// #2011: weighted --premise-depends-on entries
+eq('weighted depends_on: plain, or, or with p, and with p and decision',
+  parseWeightedDependsOn('a,b:or,c:or:0.7,d:and:0.5@dec_x'),
+  ['a', {id: 'b', kind: 'or'}, {id: 'c', kind: 'or', p: 0.7}, {id: 'd', kind: 'and', p: 0.5, decision: 'dec_x'}])
+eq('weighted depends_on: a quoted key takes its weight after the quote', parseWeightedDependsOn('"x, y":or:0.3, "k:or"'),
+  [{id: 'x, y', kind: 'or', p: 0.3}, 'k:or'])
+eq('weighted depends_on: a plain key with a colon stays a key', parseWeightedDependsOn('note: later,a:b'), ['note: later', 'a:b'])
+for (const [raw, says] of [['a:or:1.5', 'number from 0 to 1'], ['a:or:x', 'number from 0 to 1'], ['a@dec_1', 'a kind before its decision'],
+  ['a,a:or', 'twice'], [':or:0.5', 'needs an id'], ['"a":xor', 'is not :and or :or']]) {
+  const msg = (() => { try { parseWeightedDependsOn(raw); return '' } catch (e) { return e.message } })()
+  eq(`weighted depends_on refused: ${raw}`, msg.includes(says), true)
+}
+eq('weighted depends_on: plain duplicates fold, as before', parseWeightedDependsOn('a, a,b'), ['a', 'b'])
+eq('weighted depends_on: through --premise-depends-on', parsePremises(['task=1'], [], [], ['task=a:or:0.6,b:or:0.4']),
+  [{key: 'task', value: 1, depends_on: [{id: 'a', kind: 'or', p: 0.6}, {id: 'b', kind: 'or', p: 0.4}]}])
+eq('weighted depends_on: not on itself', /cannot depend on itself/.test((() => { try { parsePremises(['t=1'], [], [], ['t=t:or']); return '' } catch (e) { return e.message } })()), true)
+eq('premise role: test is taken', parsePremises(['t=1'], [], [], [], ['t=test'])[0].role, 'test')
+eq('premise role: rule is not', /role/.test((() => { try { parsePremises(['t=1'], [], [], [], ['t=rule']); return '' } catch (e) { return e.message } })()), true)
+eq('an edge prints with its kind and p', [entryText('a'), entryText({id: 'b', kind: 'or', p: 0.7}), entryText({id: 'c', kind: 'and', p: 0.5, decision: 'dec_1'})],
+  ['a', 'b (or 0.7)', 'c (and 0.5 by dec_1)'])
+eq('premises print their weighted edges', premiseLines({task: {value: 'ship', status: 'stated', role: 'wanted',
+  depends_on: [{id: 'a', kind: 'and', p: 0.8}, 'b']}, opt: {value: 'x', status: 'invalidated', face: 'ada', reason: 'pruned by dec_1'}}),
+['premises:', '  task = "ship"  [rests on a (and 0.8), b; wanted]', '  opt = "x"  [invalidated; proposed by @ada; pruned by dec_1]'])
+// the swarm: one item from each parallel group, heaviest first
+const SYN = {done: false, next: 'g', text: 'Next goal: g.\n- test a: write one [weight 1]',
+  outline: 'stated g [wanted]\n  stated (and) a',
+  ready: [{key: 'a', action: 'test', weight: 1, path: ['g', 'a']}, {key: 'b', action: 'test', weight: 0.5, path: ['g', 'b']},
+    {key: 'c', action: 'decide', weight: 0.5, path: ['g', 'c']}],
+  groups: [{weight: 1, items: [{key: 'a', action: 'test', weight: 1}, {key: 'b', action: 'test', weight: 0.5}]},
+    {weight: 0.5, items: [{key: 'c', action: 'decide', weight: 0.5}]}], claims: []}
+eq('state:next picks one per group', pickParallel(SYN, 5).map((f) => f.key), ['a', 'c'])
+eq('state:next takes at most N', pickParallel(SYN, 1).map((f) => f.key), ['a'])
+eq('state:next lines', nextLines(SYN, pickParallel(SYN, 2)),
+  ['1. test a   [weight 1]', '   for: g', '2. decide c   [weight 0.5]', '   for: g', '', '1 more ready item(s); 2 parallel group(s) in all.'])
+eq('state:next when all is claimed', nextLines({claims: [{id: 'clm_1', key: 'a', agent: 'w1'}], ready: [], groups: []}, []),
+  ['Nothing ready: every ready item is claimed: a (w1).'])
+eq('state:synopsis lines: the text, then the outline', synopsisLines(SYN),
+  ['Next goal: g.', '- test a: write one [weight 1]', '', 'Outline:', '  stated g [wanted]', '    stated (and) a'])
+eq('decide --weigh lines', weighLines({weigh: {written: true, premise: 'p', kind: 'or', cutoff: 0.85, decision: 'dec_1',
+  edges: [{id: 'a', p: 0.9}, {id: 'b', p: 0.1}], pruned: ['b'], side_node: 'sn_1'}}),
+['p: its or edges, weighed by dec_1', '  0.9   a', '  0.1   b   pruned', '', 'Pruned (set invalidated): the alternatives outside 0.85 of the probability.', 'side node: sn_1'])
+eq('decide --weigh when nothing was written', weighLines({weigh: {written: false, reason: 'the decision model gave no probabilities'}}),
+  ['Nothing was written: the decision model gave no probabilities.'])
 eq('depends_on: at most 200', /at most 200/.test((() => { try { parseDependsOn(Array.from({length: 201}, (_, i) => `k${i}`).join(',')); return '' } catch (e) { return e.message } })()), true)
 eq('client items: premises first, then messages', clientItems(['hi'], [{key: 'a', value: 1}]), [{key: 'a', value: 1}, {type: 'message', role: 'user', content: 'hi'}])
 
@@ -1687,6 +1733,27 @@ async function conversationsOverHttp() {
           status_changes: [{kind: 'premise', key: 'vendor_certified', from: 'stated', to: 'invalidated', because: null}]})
       }
       if (req.url === '/v1/states/fs_1' && req.method === 'DELETE') return send(200, {id: 'fs_1', object: 'conversation.deleted', deleted: true})
+      if (req.url === '/v1/choices' && body?.into) {
+        return send(200, {object: 'choices', model: body.model, choices: [{id: 'opt_1', name: 'Strict', description: 'Refuse.', premise: 'Strict'},
+          {id: 'opt_2', name: 'fast', description: 'Quick.', premise: 'fast (p)'}], choices_item: 'cho_1',
+        into: {premise: body.into, kind: body.kind ?? 'or', side_node: 'sn_1'}, usage: {input_tokens: 5, output_tokens: 2}})
+      }
+      if (req.url === '/v1/decisions' && body?.weigh) {
+        return send(200, {object: 'decision', answers: [{type: 'choice', name: 'weigh', probabilities: [{value: 'a', probability: 0.9}, {value: 'b', probability: 0.1}]}],
+          decision_ids: {weigh: 'dec_1'}, weigh: {premise: body.weigh.premise, kind: 'or', cutoff: body.weigh.cutoff ?? 0.85,
+            edges: [{id: 'a', p: 0.9}, {id: 'b', p: 0.1}], pruned: ['b'], side_node: 'sn_2', written: true, decision: 'dec_1'}})
+      }
+      if (req.url.startsWith('/v1/states/fs_1/synopsis')) {
+        return send(200, {object: 'state.synopsis', done: false, next: 'g', text: 'Next goal: g.', outline: 'stated g [wanted]',
+          ready: [{key: 'a', action: 'test', weight: 1}, {key: 'taken', action: 'test', weight: 0.5}, {key: 'c', action: 'decide', weight: 0.4}],
+          groups: [{items: [{key: 'a', action: 'test'}]}, {items: [{key: 'taken', action: 'test'}]}, {items: [{key: 'c', action: 'decide'}]}], claims: []})
+      }
+      if (req.url === '/v1/states/fs_1/claims' && req.method === 'POST') {
+        if (body?.key === 'taken') return send(409, {detail: "'taken' is claimed by w9 until 2026-11-21T13:00:00+00:00"})
+        return send(200, {object: 'claim', id: `clm_${body.key}`, key: body.key, agent: body.agent, since: 'now', expires_at: 'later'})
+      }
+      if (req.url === '/v1/states/fs_1/claims/clm_a' && req.method === 'DELETE') return send(200, {object: 'claim.deleted', id: 'clm_a', deleted: true})
+      if (req.url === '/v1/states/fs_1/claims/clm_x' && req.method === 'DELETE') return send(404, {detail: "no claim 'clm_x' holds on this state"})
       if (req.url === '/v1/choices') {
         if (body?.model === '@bare:maestro-1') return send(409, {detail: '@bare has nothing compiled, so version 23 has nothing to propose from. Compile a source for it. Nothing was charged.'})
         if (!body?.instructions) return send(200, {object: 'choices.question', model: body?.model, question: 'Why?', alternatives: [], usage: {input_tokens: 5, output_tokens: 2}})
@@ -1793,6 +1860,34 @@ async function conversationsOverHttp() {
     eq('decide: the old face form is refused before sending', [r.code, /@alice:maestro-1/.test(r.out)], [2, true])
     r = await run(['decide', '@alice:maestro-1/jev-latest', '--state', 'Lease.'])
     eq('decide: a question is needed', [r.code, /Ask at least one question/.test(r.out)], [2, true])
+    // #2011: --into, --weigh, state:synopsis, state:next --parallel --claim, state:release
+    r = await run(['choices', '@alice:maestro-1', '--state-id', 'fs_1', '-q', 'Which way?', '--into', 'handle bad input', '--kind', 'or'])
+    eq('choices --into: into and kind sent', [last('/v1/choices').into, last('/v1/choices').kind], ['handle bad input', 'or'])
+    eq('choices --into: says where the options went and how to weigh them',
+      [/premise: fast \(p\)/.test(r.out), /handle bad input rests on \(or edges, side node sn_1\)/.test(r.out), /--weigh "handle bad input"/.test(r.out)], [true, true, true])
+    seen.length = 0
+    r = await run(['choices', '@alice:maestro-1', '--state', 'x', '-q', 'y', '--into', 'p'])
+    eq('choices --into needs a state', [r.code !== 0, seen.filter((x) => x.url === '/v1/choices').length], [true, 0])
+    r = await run(['decide', '@alice:maestro-1/jev-latest', '--conversation', 'fs_1', '--weigh', 'p', '--cutoff', '0.9'])
+    eq('decide --weigh: sent to /v1/decisions with the state and no question',
+      [last('/v1/decisions').weigh, last('/v1/decisions').conversation, 'questions' in last('/v1/decisions')], [{premise: 'p', cutoff: 0.9}, 'fs_1', false])
+    eq('decide --weigh: the weights printed', [/0\.9\s+a/.test(r.out), /0\.1\s+b\s+pruned/.test(r.out)], [true, true])
+    seen.length = 0
+    r = await run(['decide', '@alice:maestro-1/jev-latest', '--weigh', 'p'])
+    eq('decide --weigh needs a state', [r.code, /--conversation/.test(r.out), seen.filter((x) => x.url === '/v1/decisions').length], [2, true, 0])
+    r = await run(['decide', '@alice:maestro-1/jev-latest', '--conversation', 'fs_1', '--weigh', 'p', '--cutoff', '2'])
+    eq('decide --weigh: a bad cutoff is refused', [r.code, /--cutoff/.test(r.out)], [2, true])
+    r = await run(['state:synopsis', 'fs_1', '--since', 'ci_3'])
+    eq('state:synopsis: since sent, text and outline printed', [seen.at(-1).url, /Next goal: g\./.test(r.out), /Outline:/.test(r.out)],
+      ['/v1/states/fs_1/synopsis?since=ci_3', true, true])
+    r = await run(['state:next', 'fs_1', '--parallel', '3', '--claim', 'w1', '--ttl', '600'])
+    eq('state:next: claims one per group, ttl sent', seen.filter((x) => x.url === '/v1/states/fs_1/claims').map((x) => [x.body.key, x.body.ttl_seconds]),
+      [['a', 600], ['taken', 600], ['c', 600]])
+    eq('state:next: a 409 is left to its holder', [/1\. test a/.test(r.out), /not claimed, another agent holds it: taken/.test(r.out), /decide c/.test(r.out)], [true, true, true])
+    r = await run(['state:release', 'fs_1', 'clm_a'])
+    eq('state:release', /Released clm_a/.test(r.out), true)
+    r = await run(['state:release', 'fs_1', 'clm_x'])
+    eq('state:release: a claim that does not hold', [r.code !== 0, /expired, was released/.test(r.out)], [true, true])
   } finally {
     srv.close()
     fs.rmSync(home, {recursive: true, force: true})

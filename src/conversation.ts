@@ -20,7 +20,21 @@ const KEY_REFUSED = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-
 export const PREMISE_STATUSES = ['stated', 'verified', 'assumed', 'unresolved', 'invalidated'] as const
 
 /** A premise's role, as the API takes it: `wanted` marks a goal. */
-export const PREMISE_ROLES = ['wanted'] as const
+export const PREMISE_ROLES = ['wanted', 'test'] as const
+
+/** A support edge's kind (#2011): `and`, every such child must hold; `or`, one of the alternatives. */
+export const EDGE_KINDS = ['and', 'or'] as const
+
+/** A weighted `depends_on` entry: an edge with its kind, and the weight Jev or a person set. */
+export interface DependsOnEdge {
+  id: string
+  kind: string
+  p?: number
+  decision?: string
+}
+
+/** A `depends_on` entry as the API takes and returns it: a plain id, or an edge. */
+export type DependsOnEntry = string | DependsOnEdge
 
 /** Who set a premise, as the API takes it. */
 export const PREMISE_ORIGINS = ['human', 'agent', 'tool', 'web'] as const
@@ -48,8 +62,8 @@ export interface Premise {
   value: unknown
   description?: string
   status?: string
-  depends_on?: string[]
-  /** `wanted` marks a goal; null clears it. */
+  depends_on?: DependsOnEntry[]
+  /** `wanted` marks a goal, `test` a check to make pass; null clears it. */
   role?: string | null
   /** Who set it; null clears it. */
   origin?: string | null
@@ -65,9 +79,13 @@ export interface PremiseState {
   asserted_status?: string
   /** What invalidated it, when that was something it depends on. */
   because?: string | null
-  depends_on?: string[]
-  /** `wanted` when it is a goal. */
+  depends_on?: DependsOnEntry[]
+  /** `wanted` when it is a goal, `test` when it is a check. */
   role?: string
+  /** The face that proposed it (an option written into the state by faces choices --into). */
+  face?: string
+  /** Why the server set its status: an option pruned by a weighing decision. */
+  reason?: string
   /** Who set it. */
   origin?: string
 }
@@ -109,13 +127,17 @@ export const PREMISE_DEPENDS_ON_FLAG_DESCRIPTION =
   'What a --premise rests on, as key=a,b (repeatable, one per key): premise keys, decision ids and option ids ' +
   '(opt_..., or cho_... for all of a choices list, from faces choices --state-id) already in ' +
   `the state or set in the same request, at most ${MAX_DEPENDS_ON}, comma separated (a key that holds a comma ` +
-  'goes in double quotes: key=\'"x, y",b\'). key= with nothing after it clears it; ' +
+  'goes in double quotes: key=\'"x, y",b\'). key rests on each: each must hold for it to hold. Weigh an entry ' +
+  'with :and or :or, then a weight from 0 to 1, then @ and the decision that set it: ' +
+  'task=a,b:or:0.7,c:and:0.5@dec_x. An and entry is a child that must hold (its weight is importance); the or ' +
+  'entries are alternatives, one of which holds (their weights are probabilities and sum to 1). A plain entry is ' +
+  'an and with no weight. key= with nothing after it clears it; ' +
   'left out, a newer value keeps what the key rested on before.'
 
 export const PREMISE_ROLE_FLAG_DESCRIPTION =
-  `A --premise's role, as key=role (repeatable, one per key): ${PREMISE_ROLES.join(', ')} marks it as a goal, ` +
-  'the outcome the state is working toward. key= with nothing after it clears it; left out, a newer value ' +
-  'keeps the role the key had.'
+  `A --premise's role, as key=role (repeatable, one per key): ${PREMISE_ROLES.join(' or ')}. wanted marks a goal, ` +
+  'the outcome the state is working toward (the work is done when every goal is achieved); test marks a check ' +
+  'that must pass. key= with nothing after it clears it; left out, a newer value keeps the role the key had.'
 
 export const PREMISE_ORIGIN_FLAG_DESCRIPTION =
   `Who set a --premise, as key=origin (repeatable, one per key): ${PREMISE_ORIGINS.join(', ')}. key= with ` +
@@ -314,8 +336,8 @@ export function parsePremises(
     const p = seen.get(key)
     if (!p) throw new Error(`--premise-depends-on names '${key}', which no --premise sets. Add --premise ${key}=<value>.`)
     if (linked.has(key)) throw new Error(`--premise-depends-on sets '${key}' twice. List everything it rests on once, comma separated.`)
-    const deps = parseDependsOn(text, '--premise-depends-on')
-    if (deps.includes(key)) throw new Error(`--premise-depends-on: premise '${key}' cannot depend on itself.`)
+    const deps = parseWeightedDependsOn(text, '--premise-depends-on')
+    if (deps.some((d) => entryId(d) === key)) throw new Error(`--premise-depends-on: premise '${key}' cannot depend on itself.`)
     linked.add(key)
     p.depends_on = deps
   }
@@ -373,6 +395,85 @@ export function parseDependsOn(raw: string, flag = '--depends-on'): string[] {
   return out
 }
 
+/** A `depends_on` entry's id. */
+export function entryId(d: DependsOnEntry): string {
+  return typeof d === 'string' ? d : d.id
+}
+
+/** A `depends_on` entry as it prints: `key`, or `key (or 0.7)`. */
+export function entryText(d: DependsOnEntry): string {
+  if (typeof d === 'string') return keyArg(d)
+  const p = typeof d.p === 'number' ? ` ${Math.round(d.p * 100) / 100}` : ''
+  return `${keyArg(d.id)} (${d.kind}${p}${d.decision ? ` by ${d.decision}` : ''})`
+}
+
+/** The suffix that weighs an entry: `:kind`, then `:p`, then `@decision`, each optional. */
+const EDGE_SUFFIX = /^(?::(and|or)(?::([^:@,]*))?)?(?:@(dec_[A-Za-z0-9_-]+))?$/
+const UNQUOTED_ENTRY = /^(.*?)((?::(?:and|or)(?::[^:@,]*)?)?(?:@dec_[A-Za-z0-9_-]+)?)$/
+
+function edgeOf(id: string, suffix: string, flag: string, raw: string): DependsOnEntry {
+  const m = EDGE_SUFFIX.exec(suffix)
+  if (!m) throw new Error(`${flag}: '${suffix}' after '${id}' is not :and or :or, then :p, then @dec_... (got '${raw}').`)
+  const [, kind, p, decision] = m
+  if (!kind && !decision) return id
+  if (!kind) throw new Error(`${flag}: give '${id}' a kind before its decision, :and or :or (as ${id}:or:0.7@${decision}).`)
+  const out: DependsOnEdge = {id, kind}
+  if (p !== undefined) {
+    const n = Number(p)
+    if (p.trim() === '' || !Number.isFinite(n) || n < 0 || n > 1) throw new Error(`${flag}: the weight of '${id}' is a number from 0 to 1 (got '${p}').`)
+    out.p = n
+  }
+  if (decision) out.decision = decision
+  return out
+}
+
+/**
+ * A `--premise-depends-on` list, with weights (#2011): comma separated, each entry an id
+ * (a premise key, a decision id, an option or choices id) or the id with its edge:
+ *
+ *   a                  an `and` edge with no weight, as before
+ *   b:or               an `or` edge (one of the alternatives) with no weight yet
+ *   b:or:0.7           an `or` edge with probability 0.7
+ *   c:and:0.5@dec_x    an `and` edge with importance 0.5, set by decision dec_x
+ *
+ * A key that holds a comma, or ends in what reads as a weight (`x:or`), goes in double quotes,
+ * with the weight after the closing quote: '"x, y":or:0.3'. Throws with the sentence to show.
+ */
+export function parseWeightedDependsOn(raw: string, flag = '--premise-depends-on'): DependsOnEntry[] {
+  const out: DependsOnEntry[] = []
+  let s = raw
+  for (;;) {
+    s = s.trimStart()
+    if (s === '') break
+    const q = quotedHead(s)
+    let entry: DependsOnEntry
+    if (q) {
+      const rest = q[1]
+      const i = rest.indexOf(',')
+      entry = edgeOf(q[0], (i < 0 ? rest : rest.slice(0, i)).trim(), flag, raw)
+      if (i < 0) s = ''
+      else s = rest.slice(i + 1)
+    } else {
+      const i = s.indexOf(',')
+      const tok = (i < 0 ? s : s.slice(0, i)).trim()
+      const m = UNQUOTED_ENTRY.exec(tok) as RegExpExecArray
+      if (m[1].trim() === '') throw new Error(`${flag}: an entry needs an id before its weight (got '${tok}').`)
+      entry = edgeOf(m[1].trim(), m[2], flag, raw)
+      if (i < 0) s = ''
+      else s = s.slice(i + 1)
+    }
+    const id = entryId(entry)
+    const was = out.findIndex((d) => entryId(d) === id)
+    if (was >= 0) {
+      if (typeof entry !== 'string' || typeof out[was] !== 'string') throw new Error(`${flag} names '${id}' twice. Give each entry once.`)
+      continue
+    }
+    out.push(entry)
+  }
+  if (out.length > MAX_DEPENDS_ON) throw new Error(`${flag} names at most ${MAX_DEPENDS_ON} premises and decisions (got ${out.length}).`)
+  return out
+}
+
 /**
  * The conversation fields of a turn (chat, decide, causes): `conversation`,
  * `premises` and `causes_visible`, when given. `session` is sent by
@@ -426,9 +527,11 @@ function statusNote(p: PremiseState | undefined): string {
   if (p.status && p.status !== 'stated') parts.push(p.status)
   if (p.asserted_status) parts.push(`set ${p.asserted_status}`)
   if (p.because) parts.push(`because ${p.because}`)
-  if (p.depends_on && p.depends_on.length > 0) parts.push(`rests on ${p.depends_on.map(keyArg).join(', ')}`)
+  if (p.depends_on && p.depends_on.length > 0) parts.push(`rests on ${p.depends_on.map(entryText).join(', ')}`)
   if (p.role) parts.push(p.role)
   if (p.origin) parts.push(`from ${p.origin}`)
+  if (p.face) parts.push(`proposed by @${p.face}`)
+  if (p.reason) parts.push(p.reason)
   return parts.length > 0 ? `  [${parts.join('; ')}]` : ''
 }
 

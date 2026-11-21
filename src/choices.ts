@@ -18,9 +18,12 @@ export interface ChoicesResponse {
   /** The upstream model, `@alice:maestro-1`, as sent. */
   model?: string
   /** With `state_id` and a question, each option has an `id` (`opt_...`) to name in a `depends_on`. */
-  choices?: Array<{id?: string; name?: string; description?: string}>
+  choices?: Array<{id?: string; name?: string; description?: string; premise?: string}>
   /** With `state_id` and a question: the id (`cho_...`) of the options as added to the state. */
   choices_item?: string
+  /** With `into`: the premise the options were written under, the kind of the edges, and the side node. */
+  into?: {premise?: string; kind?: string; side_node?: string}
+  warnings?: string[]
   question?: string
   alternatives?: string[]
   usage?: {input_tokens?: number; output_tokens?: number}
@@ -48,12 +51,18 @@ export function choicesLines(data: ChoicesResponse): string[] {
     choices.forEach((c, i) => {
       lines.push(`${i + 1}. ${c.name ?? '-'}${c.id ? `   [${c.id}]` : ''}`)
       if (c.description) lines.push(`   ${c.description}`)
+      if (c.premise && c.premise !== c.name) lines.push(`   premise: ${c.premise}`)
     })
-    if (data.choices_item) {
+    if (data.into?.premise) {
+      lines.push('', `Written into the state as premises that ${data.into.premise} rests on (${data.into.kind ?? 'or'} edges, ` +
+        `side node ${data.into.side_node ?? '-'}). Weigh them: faces decide <model> --conversation <id> --weigh ` +
+        `${JSON.stringify(data.into.premise)}`)
+    } else if (data.choices_item) {
       lines.push('', `Added to the state as ${data.choices_item}. Name an option id (or ${data.choices_item} for all of them) ` +
         'in --premise-depends-on or decide --depends-on.')
     }
   }
+  for (const w of data.warnings ?? []) lines.push('', `Warning: ${w}`)
   const u = data.usage
   if (u && (typeof u.input_tokens === 'number' || typeof u.output_tokens === 'number')) {
     lines.push('', `${data.model ?? 'model'}: ${(u.input_tokens ?? 0).toLocaleString('en-US')} input, ${(u.output_tokens ?? 0).toLocaleString('en-US')} output tokens`)

@@ -210,19 +210,67 @@ value is read as JSON when it is JSON (`50000`, `true`, `null`, `["a","b"]`) and
 quote it to keep a number as text: `--premise 'code="007"'`. The first time a key is used it needs
 a description: `--premise-description key="what it means"`.
 
-`--premise-role key=wanted` marks a premise as a goal, the outcome the state is working toward.
-`--premise-origin key=origin` says who set it: `human`, `agent`, `tool` or `web`. For both, `key=`
+`--premise-role key=wanted` marks a premise as a goal, the outcome the state is working toward;
+the work is done when every goal is achieved. `--premise-role key=test` marks a check that must
+pass. `--premise-origin key=origin` says who set it: `human`, `agent`, `tool` or `web`. For both, `key=`
 clears it, and a newer value without the flag keeps what the key had.
 
 `--premise-status key=status` is `stated` (the default), `verified`, `assumed`, `unresolved` or
 `invalidated`. `--premise-depends-on key=a,b` names the premise keys, decision ids and option ids it rests
-on (`key=` clears it). An option never invalidates anything. An invalidated premise invalidates everything that depends on it, and setting it
+on (`key=` clears it): each one must hold for it to hold. An option never invalidates anything.
+An invalidated premise invalidates everything that depends on it, and setting it
 to another status restores them: `state:add` prints every status that changed, and every earlier
 decision that rested on a value you changed. Nothing is decided again for you. `decide
 --depends-on` says what a decision rests on, and prints its decision id to name in a later one.
 
 `--conversation`, `--premise`, `--premise-description`, `--premise-status` and
 `--premise-depends-on` work on `chat:*` and `decide`.
+
+### And, or, and weights
+
+An entry in `--premise-depends-on` can carry its edge: `:and` or `:or`, then a weight from 0 to 1,
+then `@` and the decision that set it. An `and` entry is a child that must hold, and its weight is
+how much it matters. The `or` entries are alternatives, the readings of an ambiguity or the ways to
+do something, one of which holds, and their weights are probabilities that sum to 1. A plain entry
+is an `and` with no weight.
+
+```bash
+faces state:add fs_STATE_ID --premise task='"accept the whole corpus"' \
+  --premise-depends-on 'task=parses:and:0.8,fast:and:0.2,"strict, or not":or'
+```
+
+A key that ends in what reads as a weight (`x:or`) goes in double quotes. One premise's `or`
+alternatives invalidate it only when all of them are invalidated. `state:items` prints each edge
+with its kind and weight.
+
+Let a face propose the alternatives, then weigh them:
+
+```bash
+faces choices @alice:maestro-1 --state-id fs_STATE_ID -q "What does handle bad input mean here?" \
+  --into "handle bad input" --kind or
+faces decide @alice:maestro-1/jev-latest --conversation fs_STATE_ID --weigh "handle bad input"
+```
+
+`--into` writes each option as a premise that the named premise rests on. `--weigh` asks the face
+to weigh one premise's edges and writes each probability onto its edge. The `or` alternatives
+outside `--cutoff` (default 0.85 of the probability) are set invalidated, with the reason.
+
+### What to do next, and a swarm
+
+```bash
+faces state:synopsis fs_STATE_ID                  # the next goal, what blocks it, and the action each needs
+faces state:synopsis fs_STATE_ID --since ci_12    # and the items written since ci_12
+faces state:next fs_STATE_ID --parallel 3 --claim worker-1 --ttl 1800
+faces state:release fs_STATE_ID clm_CLAIM_ID
+```
+
+`state:synopsis` names the next goal and what blocks it, heaviest first. Each blocker comes with
+the action it needs: `test`, `decide` (weigh it), `ask` (ask the person), `expand` or `reopen`.
+`state:next` prints the ready work. With `--parallel N` it prints up to N items that can run at
+once: none rests on another, they share no unverified premise, and they touch no common resource
+(a premise's `touches` in the API).
+With `--claim agent`, each item is leased to that agent until the lease ends, the claim is released,
+or the premise changes status. Until then the other agents are not given it.
 
 States were called conversations, and before that sessions. The `conversation:*` and `session:*`
 commands, and `--session`, still work and name the same thing.

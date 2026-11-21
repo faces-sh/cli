@@ -3,7 +3,8 @@ name: Publish
 # Publishes @faces-sh/cli to npm with provenance. Runs only when a release is
 # published, from a `v*` tag (the npm environment allows nothing else), and only for a
 # commit on main that the release gate passed. Each release opens a review issue in
-# the gate; npm allows a clean unpublish for 72 hours.
+# the gate; npm allows a clean unpublish for 72 hours. The version is the tag's, so
+# releasing v1.2.3 publishes 1.2.3 whatever package.json says.
 on:
   release:
     types: [published]
@@ -50,6 +51,14 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      # The version comes from the release tag, so a release needs no change to package.json.
+      # --ignore-scripts: npm version would otherwise run any (pre|post)version script.
+      - name: Set the version from the release tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "the tag '$TAG' is not vX.Y.Z"; exit 1; }
+          npm version "${TAG#v}" --no-git-tag-version --allow-same-version --ignore-scripts
       # Trusted publishing needs npm 11.5.1 or later.
       - run: npm install -g npm@11.21.1
       - run: npm ci

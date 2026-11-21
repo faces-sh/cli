@@ -13,6 +13,12 @@ const PREMISE_KEY = /^[A-Za-z0-9_-]{1,64}$/
 /** A premise's status, as the API takes it; `stated` when none is given. */
 export const PREMISE_STATUSES = ['stated', 'verified', 'assumed', 'unresolved', 'invalidated'] as const
 
+/** A premise's role, as the API takes it: `wanted` marks a goal. */
+export const PREMISE_ROLES = ['wanted'] as const
+
+/** Who set a premise, as the API takes it. */
+export const PREMISE_ORIGINS = ['human', 'agent', 'tool', 'web'] as const
+
 /** The most premises and decisions one `depends_on` names. */
 export const MAX_DEPENDS_ON = 200
 
@@ -37,6 +43,10 @@ export interface Premise {
   description?: string
   status?: string
   depends_on?: string[]
+  /** `wanted` marks a goal; null clears it. */
+  role?: string | null
+  /** Who set it; null clears it. */
+  origin?: string | null
 }
 
 /** A key's current value, as the API returns it. */
@@ -50,6 +60,10 @@ export interface PremiseState {
   /** What invalidated it, when that was something it depends on. */
   because?: string | null
   depends_on?: string[]
+  /** `wanted` when it is a goal. */
+  role?: string
+  /** Who set it. */
+  origin?: string
 }
 
 /** One effective status a write changed. */
@@ -88,6 +102,15 @@ export const PREMISE_DEPENDS_ON_FLAG_DESCRIPTION =
   `the state or set in the same request, at most ${MAX_DEPENDS_ON}. key= with nothing after it clears it; ` +
   'left out, a newer value keeps what the key rested on before.'
 
+export const PREMISE_ROLE_FLAG_DESCRIPTION =
+  `A --premise's role, as key=role (repeatable, one per key): ${PREMISE_ROLES.join(', ')} marks it as a goal, ` +
+  'the outcome the state is working toward. key= with nothing after it clears it; left out, a newer value ' +
+  'keeps the role the key had.'
+
+export const PREMISE_ORIGIN_FLAG_DESCRIPTION =
+  `Who set a --premise, as key=origin (repeatable, one per key): ${PREMISE_ORIGINS.join(', ')}. key= with ` +
+  'nothing after it clears it; left out, a newer value keeps the origin the key had.'
+
 export const CAUSES_VISIBLE_TURN_FLAG_DESCRIPTION =
   'Whether the face reads the other faces\' causes on this turn, in a conversation with several faces. ' +
   'Leave it out to follow the state (see faces state:create --no-causes-visible).'
@@ -106,6 +129,8 @@ export function conversationTurnFlags(opts: {suffix?: string; exclusive?: string
     'premise-description': Flags.string({description: d(PREMISE_DESCRIPTION_FLAG_DESCRIPTION), multiple: true, dependsOn: ['premise'], exclusive}),
     'premise-status': Flags.string({description: d(PREMISE_STATUS_FLAG_DESCRIPTION), multiple: true, dependsOn: ['premise'], exclusive}),
     'premise-depends-on': Flags.string({description: d(PREMISE_DEPENDS_ON_FLAG_DESCRIPTION), multiple: true, dependsOn: ['premise'], exclusive}),
+    'premise-role': Flags.string({description: d(PREMISE_ROLE_FLAG_DESCRIPTION), multiple: true, dependsOn: ['premise'], exclusive}),
+    'premise-origin': Flags.string({description: d(PREMISE_ORIGIN_FLAG_DESCRIPTION), multiple: true, dependsOn: ['premise'], exclusive}),
     'causes-visible': Flags.boolean({description: d(`${CAUSES_VISIBLE_TURN_FLAG_DESCRIPTION} Needs --conversation.`), allowNo: true, exclusive}),
   }
 }
@@ -178,6 +203,8 @@ export function parsePremises(
   descriptions: string[] = [],
   statuses: string[] = [],
   dependsOn: string[] = [],
+  roles: string[] = [],
+  origins: string[] = [],
 ): Premise[] {
   const out: Premise[] = []
   const seen = new Map<string, Premise>()
@@ -226,7 +253,27 @@ export function parsePremises(
     linked.add(key)
     p.depends_on = deps
   }
+  setOneOf(seen, roles, '--premise-role', 'role', PREMISE_ROLES)
+  setOneOf(seen, origins, '--premise-origin', 'origin', PREMISE_ORIGINS)
   return out
+}
+
+/** key=value for `role` or `origin`: one of `allowed`, or nothing after = to clear it (null). */
+function setOneOf(seen: Map<string, Premise>, raws: string[], flag: string, field: 'role' | 'origin', allowed: readonly string[]): void {
+  const done = new Set<string>()
+  for (const raw of raws) {
+    const [key, text] = splitPair(raw, flag, `key=${field}`)
+    checkKey(key, flag)
+    const p = seen.get(key)
+    if (!p) throw new Error(`${flag} names '${key}', which no --premise sets. Add --premise ${key}=<value>.`)
+    if (done.has(key)) throw new Error(`${flag} sets '${key}' twice. Give one ${field} per key.`)
+    const v = text.trim().toLowerCase()
+    if (v !== '' && !allowed.includes(v)) {
+      throw new Error(`${flag} for '${key}' is ${allowed.length === 1 ? allowed[0] : `one of ${allowed.join(', ')}`}, or ${key}= to clear it (got '${text}').`)
+    }
+    done.add(key)
+    p[field] = v === '' ? null : v
+  }
 }
 
 /**
@@ -253,13 +300,16 @@ export function conversationFields(flags: {
   'premise-description'?: string[]
   'premise-status'?: string[]
   'premise-depends-on'?: string[]
+  'premise-role'?: string[]
+  'premise-origin'?: string[]
   'causes-visible'?: boolean
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (flags.conversation && flags.session && flags.conversation !== flags.session) {
     throw new Error('--session is the old name for --conversation: pass one of them, not two different ids.')
   }
-  const premises = parsePremises(flags.premise, flags['premise-description'], flags['premise-status'], flags['premise-depends-on'])
+  const premises = parsePremises(flags.premise, flags['premise-description'], flags['premise-status'], flags['premise-depends-on'],
+    flags['premise-role'], flags['premise-origin'])
   const inConversation = Boolean(flags.conversation || flags.session)
   if (!inConversation && (premises.length > 0 || flags['causes-visible'] !== undefined)) {
     throw new Error('Premises and --causes-visible belong to a state: add --conversation <id> (from faces state:create).')
@@ -291,6 +341,8 @@ function statusNote(p: PremiseState | undefined): string {
   if (p.asserted_status) parts.push(`set ${p.asserted_status}`)
   if (p.because) parts.push(`because ${p.because}`)
   if (p.depends_on && p.depends_on.length > 0) parts.push(`rests on ${p.depends_on.join(', ')}`)
+  if (p.role) parts.push(p.role)
+  if (p.origin) parts.push(`from ${p.origin}`)
   return parts.length > 0 ? `  [${parts.join('; ')}]` : ''
 }
 

@@ -194,6 +194,10 @@ value is read as JSON when it is JSON (`50000`, `true`, `null`, `["a","b"]`) and
 quote it to keep a number as text: `--premise 'code="007"'`. The first time a key is used it needs
 a description: `--premise-description key="what it means"`.
 
+`--premise-role key=wanted` marks a premise as a goal, the outcome the state is working toward.
+`--premise-origin key=origin` says who set it: `human`, `agent`, `tool` or `web`. For both, `key=`
+clears it, and a newer value without the flag keeps what the key had.
+
 `--premise-status key=status` is `stated` (the default), `verified`, `assumed`, `unresolved` or
 `invalidated`. `--premise-depends-on key=a,b` names the premise keys and decision ids it rests on
 (`key=` clears it). An invalidated premise invalidates everything that depends on it, and setting it

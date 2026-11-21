@@ -151,7 +151,11 @@ state, never saved to it. Anything that should persist goes in the state as prem
 `faces state:add --premise`.
 
 The face proposes the options it would weigh, strongest first. Leave `--question` out and it
-proposes the question it would ask. Prices: `faces models:list --kind upstream`.
+proposes the question it would ask. With `--state-id` and a question, the options are also added
+to the state: each is printed with its id (`opt_...`), and the list with its own (`cho_...`). A
+premise or a decision that rests on an option names its id in `--premise-depends-on` or
+`--depends-on` (the list's id names all of its options), and a decision resting on it, directly or
+through a premise, is shown why the face proposed it. Prices: `faces models:list --kind upstream`.
 
 ## Chat
 
@@ -202,8 +206,8 @@ a description: `--premise-description key="what it means"`.
 clears it, and a newer value without the flag keeps what the key had.
 
 `--premise-status key=status` is `stated` (the default), `verified`, `assumed`, `unresolved` or
-`invalidated`. `--premise-depends-on key=a,b` names the premise keys and decision ids it rests on
-(`key=` clears it). An invalidated premise invalidates everything that depends on it, and setting it
+`invalidated`. `--premise-depends-on key=a,b` names the premise keys, decision ids and option ids it rests
+on (`key=` clears it). An option never invalidates anything. An invalidated premise invalidates everything that depends on it, and setting it
 to another status restores them: `state:add` prints every status that changed, and every earlier
 decision that rested on a value you changed. Nothing is decided again for you. `decide
 --depends-on` says what a decision rests on, and prints its decision id to name in a later one.

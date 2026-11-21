@@ -17,7 +17,10 @@ export interface ChoicesResponse {
   object?: string
   /** The upstream model, `@alice:maestro-1`, as sent. */
   model?: string
-  choices?: Array<{name?: string; description?: string}>
+  /** With `state_id` and a question, each option has an `id` (`opt_...`) to name in a `depends_on`. */
+  choices?: Array<{id?: string; name?: string; description?: string}>
+  /** With `state_id` and a question: the id (`cho_...`) of the options as added to the state. */
+  choices_item?: string
   question?: string
   alternatives?: string[]
   usage?: {input_tokens?: number; output_tokens?: number}
@@ -43,9 +46,13 @@ export function choicesLines(data: ChoicesResponse): string[] {
     const choices = data.choices ?? []
     if (choices.length === 0) lines.push('No options.')
     choices.forEach((c, i) => {
-      lines.push(`${i + 1}. ${c.name ?? '-'}`)
+      lines.push(`${i + 1}. ${c.name ?? '-'}${c.id ? `   [${c.id}]` : ''}`)
       if (c.description) lines.push(`   ${c.description}`)
     })
+    if (data.choices_item) {
+      lines.push('', `Added to the state as ${data.choices_item}. Name an option id (or ${data.choices_item} for all of them) ` +
+        'in --premise-depends-on or decide --depends-on.')
+    }
   }
   const u = data.usage
   if (u && (typeof u.input_tokens === 'number' || typeof u.output_tokens === 'number')) {

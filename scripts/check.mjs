@@ -1638,6 +1638,10 @@ eq('reply text by endpoint', [replyText({choices: [{message: {content: 'a'}}]}, 
 eq('choices lines: numbered options and usage', choicesLines({object: 'choices', model: '@alice:maestro-1',
   choices: [{name: 'Take the offer', description: 'It pays in time.'}, {name: 'Negotiate'}], usage: {input_tokens: 1243, output_tokens: 250}}), [
   '1. Take the offer', '   It pays in time.', '2. Negotiate', '', '@alice:maestro-1: 1,243 input, 250 output tokens'])
+eq('choices lines: in a state, each option id and the list id', choicesLines({object: 'choices', model: '@alice:maestro-1',
+  choices: [{id: 'opt_a', name: 'Take the offer'}, {id: 'opt_b', name: 'Negotiate', description: 'Ask for more.'}], choices_item: 'cho_1'}), [
+  '1. Take the offer   [opt_a]', '2. Negotiate   [opt_b]', '   Ask for more.', '',
+  'Added to the state as cho_1. Name an option id (or cho_1 for all of them) in --premise-depends-on or decide --depends-on.'])
 eq('choices lines: the question it would ask', choicesLines({object: 'choices.question', model: '@alice:maestro-1', question: 'Why?', alternatives: ['How?']}), [
   '@alice would ask: Why?', '', 'Or:', '  - How?', '', 'Ask it with --question to get the options.'])
 eq('choices hint: a long situation goes in a state', /faces state:create[\s\S]*--state-id/.test(choicesHint(422, 'This description is 5201 tokens; version 23 reads prose of at most 3,000.', '@alice:maestro-1')), true)

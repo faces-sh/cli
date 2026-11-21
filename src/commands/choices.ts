@@ -5,6 +5,7 @@ import {CHOICES_PATH, MAX_CHOICES, choicesHint, choicesLines, type ChoicesRespon
 import {modelProblem} from '../model.js'
 import {heldDecisionError, readStateFlags} from '../decisions.js'
 import {retryOnceOnWarmUp, sayWarmUp} from '../utils.js'
+import {MAX_DEPENDS_ON, parseDependsOn} from '../conversation.js'
 
 export default class Choices extends BaseCommand {
   static description =
@@ -20,6 +21,7 @@ export default class Choices extends BaseCommand {
     '<%= config.bin %> <%= command.id %> @alice:maestro-1 --state "A startup offers me a lead role at a lower salary." --question "Should I take the offer?"',
     '<%= config.bin %> <%= command.id %> @head~socrates:maestro-1 --state "A chain bakery opened across the street."',
     '<%= config.bin %> <%= command.id %> @alice:maestro-1 --state-id fs_STATE_ID --question "What should the shop do?" --max-choices 3',
+    '<%= config.bin %> <%= command.id %> @alice:maestro-1 --state-id fs_STATE_ID --question "How do we get there?" --depends-on goal,budget',
     '<%= config.bin %> <%= command.id %> "(@alice | @bob):maestro-1-flash" --state-file situation.txt -q "What next?" --json',
   ]
 
@@ -32,6 +34,13 @@ export default class Choices extends BaseCommand {
       description:
         'A state (from faces state:create) as the situation. With --state, the prose is an addendum for this call only: ' +
         'read with the state, never saved to it. Write anything that should persist with faces state:add --premise.',
+    }),
+    'depends-on': Flags.string({
+      description:
+        'With --state-id, what these options rest on, comma separated: premise keys, decision ids, option ids (opt_...) ' +
+        `and choices ids (cho_...) in the state, at most ${MAX_DEPENDS_ON}. The face is shown each of them, and the ` +
+        'premises each directly depends on, in full. The options written into the state record it.',
+      dependsOn: ['state-id'],
     }),
     'max-choices': Flags.integer({description: `The most options to return, 1 to ${MAX_CHOICES}. Default 8.`, min: 1, max: MAX_CHOICES}),
   }
@@ -67,6 +76,13 @@ export default class Choices extends BaseCommand {
     if (flags.question !== undefined) {
       if (flags.question.trim() === '') this.error('--question is empty. Leave it out to have the face propose the question.')
       body.instructions = flags.question
+    }
+    if (flags['depends-on'] !== undefined) {
+      try {
+        body.depends_on = parseDependsOn(flags['depends-on'])
+      } catch (err) {
+        this.error(err instanceof Error ? err.message : String(err))
+      }
     }
     if (flags['max-choices'] !== undefined) body.max_choices = flags['max-choices']
 

@@ -1503,9 +1503,22 @@ const premiseError = (p, d) => { try { parsePremises(p, d); return undefined } c
 const premiseError2 = (p, d, st, dep) => { try { parsePremises(p, d, st, dep); return '' } catch (e) { return e.message } }
 eq('premises: no = is refused', /takes key=value \(got 'oops'\)/.test(premiseError(['oops'])), true)
 eq('premises: empty key is refused', /takes key=value/.test(premiseError(['=1'])), true)
-eq('premises: a bad key is refused before sending', /1 to 64 letters, digits, _ or - \(got 'has space'\)/.test(premiseError(['has space=1'])), true)
-eq('premises: a 65-character key is refused', /1 to 64/.test(premiseError([`${'k'.repeat(65)}=1`])), true)
-eq('premises: a 64-character key is taken', parsePremises([`${'k'.repeat(64)}=1`]).length, 1)
+eq('premises: a key is plain text', parsePremises(['everyone can eat everything served=no', 'costs under $100?=yes', 'Resolve "can eat"=check']),
+  [{key: 'everyone can eat everything served', value: 'no'}, {key: 'costs under $100?', value: 'yes'}, {key: 'Resolve "can eat"', value: 'check'}])
+eq('premises: a key with = goes in double quotes', parsePremises(['"a=b"=yes', '"say \\"hi\\""=1']), [{key: 'a=b', value: 'yes'}, {key: 'say "hi"', value: 1}])
+eq('premises: a key is trimmed', parsePremises([' my key =1']), [{key: 'my key', value: 1}])
+eq('premises: a key on two lines is refused before sending', /plain text of 1 to 120 characters on one line/.test(premiseError(['two\nlines=1'])), true)
+eq('premises: a tab is refused', /no control characters/.test(premiseError(['a\tb=1'])), true)
+eq('premises: a 121-character key is refused', /1 to 120/.test(premiseError([`${'k'.repeat(121)}=1`])), true)
+eq('premises: a 120-character key is taken', parsePremises([`${'k'.repeat(120)}=1`]).length, 1)
+eq('premises: an old key is taken as before', parsePremises(['budget_usd-2=1']), [{key: 'budget_usd-2', value: 1}])
+eq('premises: a quoted key needs = after it', /after a quoted key comes =/.test(premiseError(['"a"b=1'])), true)
+eq('premises: a description, status and depends_on name a plain-text key',
+  parsePremises(['costs under $100?=yes', '"a=b"=1'], ['costs under $100?=the budget', '"a=b"=x'], ['costs under $100?=assumed'], ['costs under $100?="a=b"']),
+  [{key: 'costs under $100?', value: 'yes', description: 'the budget', status: 'assumed', depends_on: ['a=b']}, {key: 'a=b', value: 1, description: 'x'}])
+eq('depends_on: plain-text keys, comma separated', parseDependsOn('Resolve "can eat", costs under $100?,dec_1'), ['Resolve "can eat"', 'costs under $100?', 'dec_1'])
+eq('depends_on: a key with a comma goes in double quotes', parseDependsOn('"x, y",b, "c"'), ['x, y', 'b', 'c'])
+eq('depends_on: after a quoted key comes a comma', /after a quoted key comes a comma/.test((() => { try { parseDependsOn('"x" y'); return '' } catch (e) { return e.message } })()), true)
 eq('premises: a key twice is refused', /sets 'a' twice/.test(premiseError(['a=1', 'a=2'])), true)
 eq('premises: a description with no premise is refused', /names 'b', which no --premise sets/.test(premiseError(['a=1'], ['b=x'])), true)
 eq('premises: an empty description is refused', /is empty/.test(premiseError(['a=1'], ['a=  '])), true)
@@ -1620,6 +1633,12 @@ eq('choices hint: another 422 adds nothing', choicesHint(422, '`model` is requir
 eq('conversation hint: a new premise names the flag to add',
   conversationHint(new FacesAPIError(422, "premise 'rates' is new: give its `description` (what it means, in plain words)")),
   'Say what it means: --premise-description rates="what it means, in plain words"')
+eq('conversation hint: a new plain-text key is quoted for the shell',
+  conversationHint(new FacesAPIError(422, "premise 'costs under $100?' is new: give its `description` (what it means, in plain words)")),
+  "Say what it means: --premise-description 'costs under $100?=what it means, in plain words'")
+eq('conversation hint: a key with quotes and =',
+  conversationHint(new FacesAPIError(422, `premise "it's a=b" is new: give its \`description\``)),
+  `Say what it means: --premise-description '"it'\\''s a=b"=what it means, in plain words'`)
 eq('conversation hint: another 422 adds nothing', conversationHint(new FacesAPIError(422, '`causes_visible` is true or false')), undefined)
 eq('stale decisions: none prints nothing', [staleDecisionLines([]), staleDecisionLines(undefined)], [[], []])
 eq('stale decisions: what changed under each', staleDecisionLines([{call_id: 'dec_1', question: {id: 'sign', instructions: 'Sign the contract?'}, choice: 'no', face: 'alice', changed: {vendor_certified: {was: true, now: false}}}]), [

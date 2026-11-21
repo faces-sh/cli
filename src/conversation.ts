@@ -7,8 +7,14 @@ export const CONVERSATIONS_PATH = '/v1/states'
 /** The most items one request to add to a conversation takes. */
 export const MAX_CONVERSATION_ITEMS = 20
 
-/** A premise key, as the API takes it. */
-const PREMISE_KEY = /^[A-Za-z0-9_-]{1,64}$/
+/** The most characters a premise key has, as the API takes it. */
+export const MAX_KEY_CHARS = 120
+
+/**
+ * What a premise key cannot hold, as the API refuses it: control characters (tabs and
+ * newlines among them), line and paragraph separators, and the bidirectional overrides.
+ */
+const KEY_REFUSED = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/
 
 /** A premise's status, as the API takes it; `stated` when none is given. */
 export const PREMISE_STATUSES = ['stated', 'verified', 'assumed', 'unresolved', 'invalidated'] as const
@@ -68,7 +74,9 @@ export const CONVERSATION_FLAG_DESCRIPTION =
 
 export const PREMISE_FLAG_DESCRIPTION =
   'A premise, as key=value (repeatable): a named fact the face\'s answers depend on, kept on the ' +
-  'state. The key is 1 to 64 letters, digits, _ or -. The value is read as JSON when it is JSON ' +
+  'state. The key is plain text, 1 to 120 characters, split from the value at the first =: ' +
+  '--premise \'everyone can eat=yes\'. A key that holds = goes in double quotes: --premise \'"a=b"=yes\'. ' +
+  'The value is read as JSON when it is JSON ' +
   '(50000, true, null, ["a","b"], {"max":3}) and as text otherwise, so plan=annual is the text "annual". ' +
   'Quote it to keep a number as text: --premise \'code="007"\'. A newer value of a key replaces it from ' +
   'then on. A key used for the first time needs --premise-description.'
@@ -85,7 +93,8 @@ export const PREMISE_STATUS_FLAG_DESCRIPTION =
 
 export const PREMISE_DEPENDS_ON_FLAG_DESCRIPTION =
   'What a --premise rests on, as key=a,b (repeatable, one per key): premise keys and decision ids already in ' +
-  `the state or set in the same request, at most ${MAX_DEPENDS_ON}. key= with nothing after it clears it; ` +
+  `the state or set in the same request, at most ${MAX_DEPENDS_ON}, comma separated (a key that holds a comma ` +
+  'goes in double quotes: key=\'"x, y",b\'). key= with nothing after it clears it; ' +
   'left out, a newer value keeps what the key rested on before.'
 
 export const CAUSES_VISIBLE_TURN_FLAG_DESCRIPTION =
@@ -132,8 +141,12 @@ export function conversationHint(err: FacesAPIError): string | undefined {
     return 'A state expires 30 days after it was last used, and a closed one cannot be used. ' +
       'Start another with: faces state:create'
   }
-  const fresh = err.statusCode === 422 ? /premise '([A-Za-z0-9_-]{1,64})' is new/.exec(err.message) : null
-  if (fresh) return `Say what it means: --premise-description ${fresh[1]}="what it means, in plain words"`
+  const fresh = err.statusCode === 422 ? /premise ('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*") is new/.exec(err.message) : null
+  if (fresh) {
+    const key = unrepr(fresh[1])
+    if (/^[A-Za-z0-9_-]+$/.test(key)) return `Say what it means: --premise-description ${key}="what it means, in plain words"`
+    return `Say what it means: --premise-description ${shellWord(`${keyArg(key)}=what it means, in plain words`)}`
+  }
   if (err.statusCode === 422 && /depends_on` names no premise or decision/.test(err.message)) {
     return 'Name premise keys and decision ids already in the state (faces state:items <id>), or premises set in the same request.'
   }
@@ -156,14 +169,66 @@ export function premiseValue(raw: string): unknown {
   }
 }
 
+/**
+ * A key or id written in double quotes at the start of `raw`, read as a JSON string:
+ * `"a=b"`, `"x, y"`. -> [the text, what follows it], or undefined when `raw` does not
+ * start with a closed double-quoted string.
+ */
+function quotedHead(raw: string): [string, string] | undefined {
+  const s = raw.trimStart()
+  if (!s.startsWith('"')) return undefined
+  for (let i = 1; i < s.length; i++) {
+    if (s[i] === '\\') {
+      i++
+      continue
+    }
+    if (s[i] === '"') {
+      try {
+        return [JSON.parse(s.slice(0, i + 1)) as string, s.slice(i + 1)]
+      } catch {
+        return undefined
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * `key=rest`, split at the first `=`. A key that holds `=` (or starts with a double
+ * quote) is written in double quotes, as a JSON string: `"a=b"=rest`.
+ */
 function splitPair(raw: string, flag: string, shape: string): [string, string] {
+  const q = quotedHead(raw)
+  if (q) {
+    const rest = q[1].trimStart()
+    if (!rest.startsWith('=')) throw new Error(`${flag} takes ${shape}; after a quoted key comes = (got '${raw}').`)
+    return [q[0].trim(), rest.slice(1)]
+  }
   const i = raw.indexOf('=')
   if (i <= 0) throw new Error(`${flag} takes ${shape} (got '${raw}').`)
   return [raw.slice(0, i).trim(), raw.slice(i + 1)]
 }
 
 function checkKey(key: string, flag: string): void {
-  if (!PREMISE_KEY.test(key)) throw new Error(`${flag}: a premise key is 1 to 64 letters, digits, _ or - (got '${key}').`)
+  const n = [...key].length
+  if (n < 1 || n > MAX_KEY_CHARS || KEY_REFUSED.test(key)) {
+    throw new Error(`${flag}: a premise key is plain text of 1 to ${MAX_KEY_CHARS} characters on one line, with no control characters (got ${JSON.stringify(key)}).`)
+  }
+}
+
+/** A key as a flag takes it back: in double quotes when it holds `=` or `,` or starts with one. */
+export function keyArg(key: string): string {
+  return /[=,]/.test(key) || key.startsWith('"') ? JSON.stringify(key) : key
+}
+
+/** `text` as one shell word: as it is when that is safe, in single quotes otherwise. */
+function shellWord(text: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(text) ? text : `'${text.replace(/'/g, "'\\''")}'`
+}
+
+/** A Python repr of a string ('...' or "..."), as the server quotes a key, back to the text. */
+function unrepr(q: string): string {
+  return q.slice(1, -1).replace(/\\(.)/g, '$1')
 }
 
 /**
@@ -235,7 +300,26 @@ export function parsePremises(
  * the sentence to show.
  */
 export function parseDependsOn(raw: string, flag = '--depends-on'): string[] {
-  const out = [...new Set(raw.split(',').map((x) => x.trim()).filter(Boolean))]
+  const names: string[] = []
+  let s = raw
+  for (;;) {
+    s = s.trimStart()
+    if (s === '') break
+    const q = quotedHead(s)
+    if (q) {
+      // a key that holds a comma is written in double quotes: "x, y",other
+      names.push(q[0])
+      s = q[1].trimStart()
+      if (s !== '' && !s.startsWith(',')) throw new Error(`${flag}: after a quoted key comes a comma or the end (got '${raw}').`)
+      s = s.slice(1)
+      continue
+    }
+    const i = s.indexOf(',')
+    names.push((i < 0 ? s : s.slice(0, i)).trim())
+    if (i < 0) break
+    s = s.slice(i + 1)
+  }
+  const out = [...new Set(names.map((x) => x.trim()).filter(Boolean))]
   if (out.length > MAX_DEPENDS_ON) throw new Error(`${flag} names at most ${MAX_DEPENDS_ON} premises and decisions (got ${out.length}).`)
   return out
 }
@@ -290,7 +374,7 @@ function statusNote(p: PremiseState | undefined): string {
   if (p.status && p.status !== 'stated') parts.push(p.status)
   if (p.asserted_status) parts.push(`set ${p.asserted_status}`)
   if (p.because) parts.push(`because ${p.because}`)
-  if (p.depends_on && p.depends_on.length > 0) parts.push(`rests on ${p.depends_on.join(', ')}`)
+  if (p.depends_on && p.depends_on.length > 0) parts.push(`rests on ${p.depends_on.map(keyArg).join(', ')}`)
   return parts.length > 0 ? `  [${parts.join('; ')}]` : ''
 }
 
@@ -311,7 +395,7 @@ export function premiseLines(premises: Record<string, PremiseState> | undefined)
   if (entries.length === 0) return ['premises: none']
   const lines = ['premises:']
   for (const [key, p] of entries) {
-    lines.push(`  ${key} = ${shownValue(p?.value)}${statusNote(p)}${p?.description ? `   (${p.description})` : ''}`)
+    lines.push(`  ${keyArg(key)} = ${shownValue(p?.value)}${statusNote(p)}${p?.description ? `   (${p.description})` : ''}`)
   }
   return lines
 }
@@ -383,7 +467,7 @@ export function itemLines(items: Array<Record<string, unknown>>): string[] {
       if (call?.name === 'premise') {
         const key = String(parsed(call.arguments).key ?? '?')
         const desc = typeof out.description === 'string' && out.description ? `   (${out.description})` : ''
-        lines.push(`${head}premise  ${key} = ${shownValue(out.value)}${desc}`)
+        lines.push(`${head}premise  ${keyArg(key)} = ${shownValue(out.value)}${desc}`)
       } else if (call?.name === 'decision') {
         const who = String(it.face ?? call.face ?? 'face')
         const model = it.model ?? call.model

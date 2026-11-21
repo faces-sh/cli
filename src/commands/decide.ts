@@ -106,7 +106,8 @@ export default class Decide extends BaseCommand {
     'depends-on': Flags.string({
       description:
         'In a state (--conversation), what this decision rests on, comma separated: premise keys and decision ids ' +
-        `already in the state or set with --premise, at most ${MAX_DEPENDS_ON}. The decision is shown those, and is ` +
+        `already in the state or set with --premise, at most ${MAX_DEPENDS_ON} (a key that holds a comma goes in ` +
+        'double quotes: \'"x, y",dec_1\'). The decision is shown those, and is ' +
         'invalidated when one of them is. Left out, it rests on every premise in force.',
     }),
     session: Flags.string({description: SESSION_FLAG_DESCRIPTION}),

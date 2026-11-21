@@ -189,7 +189,10 @@ faces choices @alice:maestro-1 --state-id fs_STATE_ID --question "What should th
 faces state:items fs_STATE_ID
 ```
 
-A premise is `--premise key=value`, repeatable. The key is 1 to 64 letters, digits, `_` or `-`. The
+A premise is `--premise key=value`, repeatable. The key is plain text, 1 to 120 characters on one
+line, split from the value at the first `=`: `--premise 'everyone can eat=yes'`. A key that holds
+`=` goes in double quotes, as a JSON string: `--premise '"a=b"=yes'`. In a list (`a,b`), a key that
+holds a comma goes in double quotes too: `--depends-on '"x, y",costs under $100?'`. The
 value is read as JSON when it is JSON (`50000`, `true`, `null`, `["a","b"]`) and as text otherwise;
 quote it to keep a number as text: `--premise 'code="007"'`. The first time a key is used it needs
 a description: `--premise-description key="what it means"`.

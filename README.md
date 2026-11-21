@@ -146,6 +146,15 @@ faces choices @head~socrates:maestro-1 --state-id fs_STATE_ID --question "What s
 faces choices "(@alice | @bob):maestro-1-flash" --state-file situation.txt -q "What next?"
 ```
 
+With `--state-id`, `--depends-on` names what the options rest on, comma separated: premise
+keys, decision ids, option ids and choices ids in the state. The face is shown each of them, and
+the premises each directly depends on, in full, and the options written into the state record
+it:
+
+```bash
+faces choices @alice:maestro-1 --state-id fs_STATE_ID --question "How do we get there?" --depends-on goal,budget
+```
+
 With both `--state-id` and `--state`, the prose is an addendum for that one call: read with the
 state, never saved to it. Anything that should persist goes in the state as premises, with
 `faces state:add --premise`.

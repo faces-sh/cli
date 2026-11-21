@@ -10,7 +10,10 @@ export const CATALOG_INDEX = path.join(os.homedir(), '.faces', 'catalog.json')
 
 export interface FaceFrontmatter {
   name: string
+  /** The face's "use me for" line: when an agent should ask it. */
   description?: string
+  /** The mode the face brings, at most 80 characters. */
+  specialty?: string
   alias: string
   attributes?: Record<string, string>
   tags?: string[]
@@ -27,6 +30,7 @@ export interface FaceDataInput {
   alias: string
   uid?: string
   description?: string | null
+  specialty?: string | null
   basic_facts?: Record<string, string | {value: string}> | null
   tags?: string[] | null
   default_model?: string | null
@@ -39,6 +43,7 @@ function serializeFrontmatter(fm: FaceFrontmatter): string {
   const lines: string[] = ['---']
   lines.push(`name: ${quoteYaml(fm.name)}`)
   if (fm.description) lines.push(`description: ${quoteYaml(fm.description)}`)
+  if (fm.specialty) lines.push(`specialty: ${quoteYaml(fm.specialty)}`)
   lines.push(`alias: ${quoteYaml(fm.alias)}`)
   if (fm.default_model) lines.push(`default_model: ${quoteYaml(fm.default_model)}`)
   if (fm.formula) lines.push(`formula: ${quoteYaml(fm.formula)}`)
@@ -76,7 +81,7 @@ function parseFrontmatter(content: string): {frontmatter: FaceFrontmatter | null
   // profile_token_count is retired from the API. It stays
   // known so an old FACE.md drops the line on its next write, rather than
   // carrying it forever as a key the CLI does not manage.
-  const knownKeys = new Set(['name', 'description', 'alias', 'attributes', 'tags', 'default_model', 'formula', 'component_counts', 'compiled_tokens', 'profile_token_count'])
+  const knownKeys = new Set(['name', 'description', 'specialty', 'alias', 'attributes', 'tags', 'default_model', 'formula', 'component_counts', 'compiled_tokens', 'profile_token_count'])
 
   // Earlier versions stacked a new block on top of an old one; read every
   // leading block, the first (newest) winning, so the next write collapses them.
@@ -115,6 +120,7 @@ function parseFrontmatter(content: string): {frontmatter: FaceFrontmatter | null
       } else if (seen) continue
       else if (key === 'name') fm.name = val
       else if (key === 'description') fm.description = val
+      else if (key === 'specialty') fm.specialty = val
       else if (key === 'alias') fm.alias = val
       else if (key === 'default_model') fm.default_model = val
       else if (key === 'formula') fm.formula = val
@@ -156,12 +162,14 @@ export class CatalogService {
 
       let existingBody = DEFAULT_BODY
       let existingDescription: string | undefined
+      let existingSpecialty: string | undefined
       let existingExtraLines: string[] = []
       if (fs.existsSync(filePath)) {
         const existing = fs.readFileSync(filePath, 'utf8')
         const parsed = parseFrontmatter(existing)
         if (parsed.body.trim()) existingBody = parsed.body
         if (parsed.partial.description) existingDescription = parsed.partial.description
+        if (parsed.partial.specialty) existingSpecialty = parsed.partial.specialty
         existingExtraLines = (parsed.partial.extraLines as string[] | undefined) ?? []
       }
 
@@ -187,6 +195,15 @@ export class CatalogService {
         } else {
           fm.description = existingDescription
         }
+      }
+
+      // Specialty: the server's, when the caller has it. null or "" means the
+      // owner cleared it, so the line goes; only a caller that did not fetch it
+      // at all (undefined) keeps what the file had.
+      if (typeof faceData.specialty === 'string') {
+        if (faceData.specialty) fm.specialty = faceData.specialty
+      } else if (faceData.specialty === undefined && existingSpecialty) {
+        fm.specialty = existingSpecialty
       }
 
       if (faceData.default_model) fm.default_model = faceData.default_model

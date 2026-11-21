@@ -1133,6 +1133,63 @@ await keyFallback()
   fs.rmSync(home, {recursive: true, force: true})
 }
 
+// --- the catalog carries what an agent chooses a face by ---------------------
+{
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'faces-check-'))
+  const code = `
+    const {CatalogService} = await import('${new URL('../dist/catalog.js', import.meta.url).href}')
+    const fs = await import('node:fs'); const path = await import('node:path'); const os = await import('node:os')
+    const face = path.join(os.homedir(), '.faces', 'catalog', 'lev', 'FACE.md')
+    const c = new CatalogService()
+    const out = {}
+    c.writeFace({name: 'Lev', alias: 'lev', description: 'Use me for morphogenesis.', specialty: 'Biological Platonism'})
+    out.first = fs.readFileSync(face, 'utf8')
+    c.writeFace({name: 'Lev', alias: 'lev'})
+    out.kept = fs.readFileSync(face, 'utf8')
+    c.writeFace({name: 'Lev', alias: 'lev', specialty: null})
+    out.cleared = fs.readFileSync(face, 'utf8')
+    out.index = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.faces', 'catalog.json'), 'utf8'))
+    console.log(JSON.stringify(out))`
+  const out = spawnSync(process.execPath, ['--input-type=module', '-e', code], {env: {...process.env, HOME: home}, encoding: 'utf8'})
+  const r = JSON.parse(out.stdout.trim().split('\n').at(-1))
+  eq('FACE.md: specialty written', /specialty: "?Biological Platonism"?/.test(r.first), true)
+  eq('FACE.md: description written', /description: "?Use me for morphogenesis\."?/.test(r.first), true)
+  eq('FACE.md: a write that did not fetch it keeps the specialty', /specialty:/.test(r.kept), true)
+  eq('FACE.md: a cleared specialty goes', /specialty:/.test(r.cleared), false)
+  eq('catalog.json: specialty indexed', r.index.length, 1)
+  fs.rmSync(home, {recursive: true, force: true})
+}
+
+// --- face:list --for ranks, and shows the fit and the description ------------
+async function listFor() {
+  const hits = []
+  const srv = http.createServer((req, res) => {
+    hits.push(req.url)
+    res.writeHead(200, {'content-type': 'application/json'})
+    if (req.url.startsWith('/v1/oauth')) return res.end('[]')
+    res.end(JSON.stringify({object: 'list', has_more: false, next_cursor: null, data: [
+      {alias: 'knuth', name: 'Knuth', specialty: 'Literate rigour', description: 'Use me for analysing an algorithm.', fit: 0.628},
+      {alias: 'grove', name: 'Grove', specialty: null, description: null, fit: 0.1},
+    ]}))
+  })
+  await new Promise((r) => srv.listen(0, r))
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'faces-check-'))
+  const env = {...process.env, HOME: home, FACES_BASE_URL: `http://127.0.0.1:${srv.address().port}`, FACES_TOKEN: 'jwt-check'}
+  const run = (args) => new Promise((r) => execFile(process.execPath, ['bin/run.js', ...args], {env}, (err, stdout, stderr) => r({code: err ? err.code : 0, stdout, stderr})))
+  try {
+    const got = await run(['face:list', '--for', 'why is this sort quadratic', '-d'])
+    eq('face:list --for: sent as for=', hits.some((u) => u.includes('for=why%20is%20this%20sort%20quadratic')), true)
+    eq('face:list --for: shows the fit', /^0\.63  knuth/m.test(got.stdout), true)
+    eq('face:list -d: shows the description', /Use me for analysing an algorithm\./.test(got.stdout), true)
+    const both = await run(['face:list', '--for', 'x', '--sort', 'alias'])
+    eq('face:list --for with --sort: refused locally', both.code, 2)
+  } finally {
+    srv.close()
+    fs.rmSync(home, {recursive: true, force: true})
+  }
+}
+await listFor()
+
 // --- a failed style job is a failed wait --------------------------------------
 async function failedStyleJob() {
   const srv = http.createServer((req, res) => {

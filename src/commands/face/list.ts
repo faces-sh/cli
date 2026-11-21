@@ -16,8 +16,12 @@ interface FaceObject {
   /** How a shared face reached you: "shared", "workspace", or both. Absent on your own and on published faces. */
   via?: string[] | null
   read_only?: boolean
-  /** The short line saying what this face is for. */
+  /** The mode the face brings, in a few words (at most 80 characters). */
   specialty?: string | null
+  /** The face's "use me for" line: when to ask it. */
+  description?: string | null
+  /** How well the face fits --for, 0 to 1. Only with --for. */
+  fit?: number | null
   /** Last change to the face itself, not to its compiled material. */
   updated_at?: string | null
   /** Counters, only with --include usage. */
@@ -41,7 +45,8 @@ const SYSTEM_OWNER = 'head'
 export default class FaceList extends BaseCommand {
   static description =
     'List faces. By default lists owned faces, newest first; use --public to include published faces ' +
-    'from other accounts, --search to match on text, and --sort/--order to change the ordering.'
+    'from other accounts, --search to match on text, --for to rank by how well each face fits a task, ' +
+    'and --sort/--order to change the ordering.'
 
   static flags = {
     ...BaseCommand.baseFlags,
@@ -80,7 +85,18 @@ export default class FaceList extends BaseCommand {
         'most used first for usage, best match first for relevance, and A to Z for alias.',
     }),
     search: Flags.string({
-      description: 'Only faces whose alias, name or description matches this text',
+      description: 'Only faces whose alias, name, specialty or description contains this text',
+    }),
+    for: Flags.string({
+      description:
+        'A task or question in plain words. Ranks the faces by how well their specialty and description ' +
+        '(the "use me for" line) fit it, best first, with the fit from 0 to 1. Ranks, never filters. ' +
+        'Cannot be combined with --sort.',
+    }),
+    descriptions: Flags.boolean({
+      char: 'd',
+      description: 'Show each face\'s description (its "use me for" line) under it',
+      default: false,
     }),
   }
 
@@ -113,6 +129,15 @@ export default class FaceList extends BaseCommand {
       this.error('--sort relevance ranks by how well a face matches --search, so it needs one.')
     }
 
+    // --for IS the ordering. The server refuses the pair; say so before asking.
+    if (flags.for !== undefined && flags.sort) {
+      this.error('--for ranks by fit, so it cannot be combined with --sort. Drop one.')
+    }
+
+    if (flags.for !== undefined && !flags.for.trim()) {
+      this.error('--for needs a task or question, for example --for "review a database migration".')
+    }
+
     // Any cross-account owner filter implies we want published faces.
     const includePublished = flags.public || flags.system || fromUsers.length > 0 || notFromUsers.length > 0
 
@@ -131,6 +156,7 @@ export default class FaceList extends BaseCommand {
     // the others.
     if (flags.order) parts.push(`order=${encodeURIComponent(flags.order)}`)
     if (flags.search) parts.push(`q=${encodeURIComponent(flags.search)}`)
+    if (flags.for) parts.push(`for=${encodeURIComponent(flags.for)}`)
     if (includePublished) parts.push('include_published=true')
     if (flags.shared) parts.push('include_shared=true')
     for (const u of fromUsers) parts.push(`from_users=${encodeURIComponent(u)}`)
@@ -222,7 +248,12 @@ export default class FaceList extends BaseCommand {
           if (f.read_only) suffix += '  [read only]'
           // The help promises the specialty beside the name.
           const spec = f.specialty ? `  (${f.specialty})` : ''
-          this.log(`${handle(f).padEnd(handleWidth)}  ${f.name.padEnd(nameWidth)}${spec}${suffix}`.trimEnd())
+          const fit = typeof f.fit === 'number' ? `${f.fit.toFixed(2)}  ` : ''
+          this.log(`${fit}${handle(f).padEnd(handleWidth)}  ${f.name.padEnd(nameWidth)}${spec}${suffix}`.trimEnd())
+          if (flags.descriptions && f.description) {
+            const indent = ' '.repeat(fit.length + 4)
+            for (const line of f.description.split('\n')) this.log(`${indent}${line}`.trimEnd())
+          }
         }
       }
 

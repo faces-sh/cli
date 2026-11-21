@@ -97,6 +97,7 @@ export default class CatalogDoctor extends BaseCommand {
                 const v = unquoteYaml(line.slice(ci + 1))
                 if (k === 'name') fm.name = v
                 if (k === 'description') fm.description = v
+                if (k === 'specialty') fm.specialty = v
               }
               if (fm.name) localFrontmatters.set(dirent.name, fm as FaceFrontmatter)
             }
@@ -116,7 +117,13 @@ export default class CatalogDoctor extends BaseCommand {
         missing.push(remote)
       } else {
         const local = localFrontmatters.get(alias)
-        if (local && local.name !== remote.name) {
+        // The specialty and description are what an agent reads to choose a
+        // face, so a catalog that disagrees with the server about them is stale.
+        const remoteSpecialty = remote.specialty || undefined
+        const remoteDescription = remote.description || undefined
+        if (local && (local.name !== remote.name ||
+            (local.specialty || undefined) !== remoteSpecialty ||
+            (remoteDescription !== undefined && local.description !== remoteDescription))) {
           stale.push(remote)
         }
       }

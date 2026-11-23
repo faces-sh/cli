@@ -3,8 +3,12 @@ import {BaseCommand} from '../../base.js'
 import {FacesAPIError} from '../../client.js'
 import {renameFaceFields, faceStyles, readablePatternError} from '../../utils.js'
 
+/** How many faces --for shows when no --limit is given. */
+const FOR_LIMIT = 10
+
 interface FaceObject {
   alias: string
+  fit?: number
   name: string
   published?: boolean
   owned_by?: string | null
@@ -82,6 +86,15 @@ export default class FaceList extends BaseCommand {
     search: Flags.string({
       description: 'Only faces whose alias, name or description matches this text',
     }),
+    for: Flags.string({
+      description:
+        'A task, in plain words: ranks the faces by how well their "use me for" line fits it, best first, each with ' +
+        'its fit from 0 to 1. It ranks and never filters. Shows the best 10 unless --limit says otherwise.',
+    }),
+    limit: Flags.integer({
+      description: `The most faces to show, best first with --for; 0 shows all. Default: ${FOR_LIMIT} with --for, all without.`,
+      min: 0,
+    }),
   }
 
   async run(): Promise<unknown> {
@@ -131,6 +144,7 @@ export default class FaceList extends BaseCommand {
     // the others.
     if (flags.order) parts.push(`order=${encodeURIComponent(flags.order)}`)
     if (flags.search) parts.push(`q=${encodeURIComponent(flags.search)}`)
+    if (flags.for) parts.push(`for=${encodeURIComponent(flags.for)}`)
     if (includePublished) parts.push('include_published=true')
     if (flags.shared) parts.push('include_shared=true')
     for (const u of fromUsers) parts.push(`from_users=${encodeURIComponent(u)}`)
@@ -174,6 +188,11 @@ export default class FaceList extends BaseCommand {
       const block = new Set(notFromUsers)
       faces = faces.filter(f => f.owned_by == null || !block.has(f.owned_by))
     }
+    // --limit, and --for's default of the best FOR_LIMIT: the rest are counted, not printed
+    const limit = flags.limit ?? (flags.for ? FOR_LIMIT : 0)
+    const more = limit > 0 ? Math.max(0, faces.length - limit) : 0
+    if (more > 0) faces = faces.slice(0, limit)
+    if (more > 0 && data && typeof data === 'object' && !Array.isArray(data)) (data as Record<string, unknown>).more = more
     // Keep --json output consistent with what we display.
     if ((data as {data?: unknown}).data !== undefined) (data as {data: unknown}).data = faces
     else data = faces
@@ -222,8 +241,14 @@ export default class FaceList extends BaseCommand {
           if (f.read_only) suffix += '  [read only]'
           // The help promises the specialty beside the name.
           const spec = f.specialty ? `  (${f.specialty})` : ''
-          this.log(`${handle(f).padEnd(handleWidth)}  ${f.name.padEnd(nameWidth)}${spec}${suffix}`.trimEnd())
+          const fit = typeof f.fit === 'number' ? `${f.fit.toFixed(2)}  ` : ''
+          this.log(`${fit}${handle(f).padEnd(handleWidth)}  ${f.name.padEnd(nameWidth)}${spec}${suffix}`.trimEnd())
         }
+      }
+
+      if (more > 0) {
+        this.log('')
+        this.log(`${more} more face${more === 1 ? '' : 's'} ${flags.for ? 'fit less well' : 'not shown'}. --limit N shows the first N; --limit 0 shows all.`)
       }
 
       // Say when the list is short. A truncated list that reads as complete is

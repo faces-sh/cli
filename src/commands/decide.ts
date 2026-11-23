@@ -20,6 +20,31 @@ import {
 import {compileHint, sayWarmUp, SESSION_FLAG_DESCRIPTION, COMPACTION_FLAG_DESCRIPTION} from '../utils.js'
 import {modelProblem, parseModel} from '../model.js'
 
+/** What /v1/decisions answers with `weigh`. */
+export interface WeighResponse {
+  answers?: Array<{probabilities?: Array<{value?: string; probability?: number}>; choice?: string}>
+  decision_ids?: Record<string, string>
+  weigh?: {premise?: string; kind?: string; cutoff?: number; edges?: Array<{id?: string; p?: number}>;
+    pruned?: string[]; side_node?: string; written?: boolean; decision?: string; reason?: string}
+}
+
+/** A weighing decision as lines a person reads. */
+export function weighLines(data: WeighResponse): string[] {
+  const w = data.weigh ?? {}
+  if (!w.written) return [`Nothing was written: ${w.reason ?? 'the decision gave no weights'}.`]
+  const lines = [`${w.premise ?? '?'}: its ${w.kind ?? '?'} edges, weighed by ${w.decision ?? 'the decision'}`]
+  for (const e of w.edges ?? []) {
+    const p = typeof e.p === 'number' ? e.p : 0
+    const pruned = (w.pruned ?? []).includes(e.id ?? '') ? '   pruned' : ''
+    lines.push(`  ${String(Math.round(p * 100) / 100).padEnd(5)} ${e.id ?? '?'}${pruned}`)
+  }
+  if ((w.pruned ?? []).length > 0) {
+    lines.push('', `Pruned (set invalidated): the alternatives outside ${w.cutoff ?? 0.85} of the probability.`)
+  }
+  lines.push(`side node: ${w.side_node ?? '-'}`)
+  return lines
+}
+
 /** Decision models served on /v1/decisions in OpenAI's format and refused on /v1/systemone. */
 const OPENAI_FORMAT_ONLY = ['gpt-6-luna'] as const
 
@@ -43,6 +68,7 @@ export default class Decide extends BaseCommand {
       '--level yields --level hedges --level firm',
     '<%= config.bin %> <%= command.id %> "(@alice | @bob):maestro-1/jev-latest" --state-file situation.json --questions-file questions.json --json',
     '<%= config.bin %> <%= command.id %> @alice:maestro-1/gpt-6-luna --state-file situation.txt --questions-file questions.json',
+    '<%= config.bin %> <%= command.id %> @alice:maestro-1/jev-latest --conversation fs_STATE_ID --weigh "handle bad input"',
   ]
 
   static flags = {
@@ -105,9 +131,30 @@ export default class Decide extends BaseCommand {
     ...conversationTurnFlags(),
     'depends-on': Flags.string({
       description:
-        'In a state (--conversation), what this decision rests on, comma separated: premise keys and decision ids ' +
-        `already in the state or set with --premise, at most ${MAX_DEPENDS_ON}. The decision is shown those, and is ` +
+        'In a state (--conversation), what this decision rests on, comma separated: premise keys, decision ids and ' +
+        'option ids (opt_..., or cho_... for all of a choices list, from faces choices --state-id) ' +
+        `already in the state or set with --premise, at most ${MAX_DEPENDS_ON} (a key that holds a comma goes in ` +
+        'double quotes: \'"x, y",dec_1\'). The decision is shown those, and is ' +
         'invalidated when one of them is. Left out, it rests on every premise in force.',
+    }),
+    weigh: Flags.string({
+      description:
+        'In a state (--conversation): weigh the edges of this premise. The face decides between the premises it rests ' +
+        'on (one kind at a time, --weigh-kind), and each probability is written onto its edge with the decision that ' +
+        'set it. For or edges, the alternatives outside --cutoff are set invalidated, with the reason. No --question: ' +
+        'the question is the premise and its children. Sent in OpenAI\'s format.',
+      exclusive: ['question', 'questions-file', 'depends-on'],
+    }),
+    'weigh-kind': Flags.string({
+      description: 'With --weigh, when the premise rests on both kinds: which edges to weigh, or or and.',
+      options: ['or', 'and'],
+      dependsOn: ['weigh'],
+    }),
+    cutoff: Flags.string({
+      description:
+        'With --weigh: the probability mass to keep, above 0 and at most 1 (default 0.85). The likeliest or ' +
+        'alternatives are kept until they reach it; the rest are pruned. and children are never pruned.',
+      dependsOn: ['weigh'],
     }),
     session: Flags.string({description: SESSION_FLAG_DESCRIPTION}),
     compaction: Flags.string({description: COMPACTION_FLAG_DESCRIPTION}),
@@ -160,7 +207,9 @@ export default class Decide extends BaseCommand {
       this.error(err instanceof Error ? err.message : String(err))
     }
 
-    const state = this.readState(flags)
+    if (flags.weigh !== undefined) return this.weigh(client, flags, name, downstream, json, turn)
+
+    const state = flags.conversation && !flags.state && !flags['state-file'] ? undefined : this.readState(flags)
     const questions = this.readQuestions(flags)
     if (!questions) this.error('Ask at least one question, with --question or --questions-file.')
     const openaiOnly = (OPENAI_FORMAT_ONLY as readonly string[]).includes(downstream.toLowerCase())
@@ -180,7 +229,7 @@ export default class Decide extends BaseCommand {
     }
 
     const model = `${name.upstream}/${downstream}`
-    let body: Record<string, unknown> = {model, state, questions}
+    let body: Record<string, unknown> = state === undefined ? {model, questions} : {model, state, questions}
     if (flags.format === 'openai') {
       try {
         body = toOpenAIDecision(model, state, questions)
@@ -260,6 +309,47 @@ export default class Decide extends BaseCommand {
         waited += wait
       }
     }
+  }
+
+  /** decide --weigh: one weighing decision on /v1/decisions, its weights written into the state. */
+  private async weigh(
+    client: ReturnType<typeof this.makeClient>,
+    flags: {weigh?: string; 'weigh-kind'?: string; cutoff?: string; conversation?: string; session?: string; state?: string; 'state-file'?: string; retry: boolean},
+    name: ReturnType<typeof parseModel>,
+    downstream: string,
+    json: boolean,
+    turn: Record<string, unknown>,
+  ): Promise<unknown> {
+    const sid = flags.conversation ?? flags.session
+    if (!sid) this.error('--weigh weighs a premise of a state: add --conversation <id> (from faces state:create).')
+    const premise = (flags.weigh ?? '').trim()
+    if (!premise) this.error('--weigh is empty: name the premise whose edges to weigh.')
+    const weigh: Record<string, unknown> = {premise}
+    if (flags['weigh-kind']) weigh.kind = flags['weigh-kind']
+    if (flags.cutoff !== undefined) {
+      const c = Number(flags.cutoff)
+      if (!Number.isFinite(c) || c <= 0 || c > 1) this.error(`--cutoff is a number above 0 and at most 1 (got '${flags.cutoff}').`)
+      weigh.cutoff = c
+    }
+    this.models = await decisionModels(client)
+    const match = this.models.find((m) => m.toLowerCase() === downstream.toLowerCase())
+    if (!match) this.error(`'${downstream}' is not a decision model. The decision models are: ${this.models.join(', ')}.`)
+    const body: Record<string, unknown> = {model: `${name.upstream}/${match}`, conversation: sid, weigh, ...turn}
+    if (flags.state !== undefined || flags['state-file'] !== undefined) {
+      const st = this.readState(flags)
+      body.input = typeof st === 'string' ? st : JSON.stringify(st)
+    }
+    if (!json) process.stderr.write(`Weighing ${premise} with ${name.faces}. Decision model: ${match}. This usually takes 10 to 20 seconds.\n`)
+    let data: WeighResponse
+    try {
+      data = (await this.ask(client, body, flags.retry, json, '/v1/decisions')) as WeighResponse
+    } catch (err) {
+      if (err instanceof FacesAPIError) this.error(this.explain(err, name.faces as string, match))
+      throw err
+    }
+    if (json) return data
+    for (const line of weighLines(data)) this.log(line)
+    return data
   }
 
   private readState(flags: {state?: string; 'state-file'?: string}): unknown {

@@ -60,7 +60,10 @@ faces face:tag:add / list / remove / set / all
 faces choices                     # what a face would do: its options, or the question it would ask
 faces chat:chat / messages / responses / thread   # chat with a face on any chat model
 faces decide                      # what a face would decide: yes/no, a choice, or a score
-faces state:create / get / items / add / compact / close
+faces state:create --use / use / get   # a state for this directory (.faces/state) and its proof
+faces premise:add / edit / get / delete / claim
+faces premise:refine / choices / decide # billed: refine a premise with a face, its candidates, their ranking
+faces state:items / add / compact / close   # the older premise-list commands, still served
 faces conversation:create / ...   # the old name for state:*
 faces session:create / get / compact / close   # an older name
 
@@ -146,12 +149,25 @@ faces choices @head~socrates:maestro-1 --state-id fs_STATE_ID --question "What s
 faces choices "(@alice | @bob):maestro-1-flash" --state-file situation.txt -q "What next?"
 ```
 
+With `--state-id`, `--depends-on` names what the options rest on, comma separated: premise
+keys, decision ids, option ids and choices ids in the state. The face is shown each of them, and
+the premises each directly depends on, in full, and the options written into the state record
+it:
+
+```bash
+faces choices @alice:maestro-1 --state-id fs_STATE_ID --question "How do we get there?" --depends-on goal,budget
+```
+
 With both `--state-id` and `--state`, the prose is an addendum for that one call: read with the
 state, never saved to it. Anything that should persist goes in the state as premises, with
-`faces state:add --premise`.
+`faces premise:add`.
 
 The face proposes the options it would weigh, strongest first. Leave `--question` out and it
-proposes the question it would ask. Prices: `faces models:list --kind upstream`.
+proposes the question it would ask. With `--state-id` and a question, the options are also added
+to the state: each is printed with its id (`opt_...`), and the list with its own (`cho_...`). A
+premise or a decision that rests on an option names its id in `--premise-depends-on` or
+`--depends-on` (the list's id names all of its options), and a decision resting on it, directly or
+through a premise, is shown why the face proposed it. Prices: `faces models:list --kind upstream`.
 
 ## Chat
 
@@ -172,40 +188,42 @@ The face's style is chosen for each request, from the face's built styles. `styl
 
 ## States
 
-A state keeps the situation your agent builds on the server: **premises** (named facts, each with
-a status and what it depends on), the decisions faces made, and your messages. Hand it to a face
-with `faces choices --state-id`, or pass it to `chat:*` and `decide` with `--conversation`.
+A state is a proof in progress, kept on the server: a tree of premises joined by AND and OR,
+each box proved `[x]`, open `[ ]` or refuted `[-]`, and a last line that names what still stands
+between you and a proved goal. `faces state:create --use` makes one for this directory (its id
+goes in `.faces/state`), and every `premise:*` and `state:*` command here or below works on it.
 
 ```bash
-faces state:create @alice
-faces state:add fs_STATE_ID --premise rent_rises='"12% in March"' --premise-status rent_rises=assumed \
-  --premise-description rent_rises="the landlord says rent goes up 12% in March"
-faces state:add fs_STATE_ID --premise can_afford=false --premise-depends-on can_afford=rent_rises \
-  --premise-description can_afford="the shop can carry the higher rent"
-faces decide @alice:maestro-1/jev-latest --conversation fs_STATE_ID --depends-on can_afford \
-  --state "Decide about the lease." --question "Move the shop to a cheaper street?"
-faces state:add fs_STATE_ID --premise rent_rises='"no rise this year"' --premise-status rent_rises=invalidated
-faces choices @alice:maestro-1 --state-id fs_STATE_ID --question "What should the shop do?"
-faces state:items fs_STATE_ID
+faces state:create --use
+faces premise:add "the dinner is planned" "A dinner party for six" --role goal --said "Plan a dinner party for six."
+faces premise:add "the guests" "Six, one vegan" --and "the dinner is planned"
+faces premise:refine "the dinner is planned" --face alice
+faces state:get
 ```
 
-A premise is `--premise key=value`, repeatable. The key is 1 to 64 letters, digits, `_` or `-`. The
-value is read as JSON when it is JSON (`50000`, `true`, `null`, `["a","b"]`) and as text otherwise;
-quote it to keep a number as text: `--premise 'code="007"'`. The first time a key is used it needs
-a description: `--premise-description key="what it means"`.
+`premise:add` writes a box: `--role goal` or `--role test` (none is a fact), under a parent with
+`--and` (all such children must hold) or `--or` (one candidate is enough), reading inputs with
+`--on a,b`. `premise:edit` changes one: a new value, a status, a test's run (`--status verified
+--tested "<candidate>" --evidence "..."`), or what it waits on (`--await human`). `premise:get`
+shows one box, its branch and its messages; `premise:delete` removes one. Writing and reading a
+state are free.
 
-`--premise-status key=status` is `stated` (the default), `verified`, `assumed`, `unresolved` or
-`invalidated`. `--premise-depends-on key=a,b` names the premise keys and decision ids it rests on
-(`key=` clears it). An invalidated premise invalidates everything that depends on it, and setting it
-to another status restores them: `state:add` prints every status that changed, and every earlier
-decision that rested on a value you changed. Nothing is decided again for you. `decide
---depends-on` says what a decision rests on, and prints its decision id to name in a later one.
+`premise:refine "<key>" --face <alias>` asks the face to refine a premise: it decides whether
+the premise needs conditions (AND), a pinned meaning (OR, its candidates ranked), one test, or
+the human's answer, and writes one tier of children (`-r` goes on down, `--depth N|all`).
+`premise:choices` asks the face for candidates, and `premise:decide` ranks them; a ranking never
+rules a candidate out, only a failed test or the human does. These three are billed per call.
 
-`--conversation`, `--premise`, `--premise-description`, `--premise-status` and
-`--premise-depends-on` work on `chat:*` and `decide`.
+Several agents can work one state: `premise:claim "<key>" <name>` gives a branch to one of them,
+and writes into it by anyone else are refused until it is released (`--release`) or expires.
+Every write takes `--as <name>`.
 
-States were called conversations, and before that sessions. The `conversation:*` and `session:*`
-commands, and `--session`, still work and name the same thing.
+The whole guide, with how to read the tree and the hooks that show it to your agent, is in the
+Faces skill: [STATES.md](https://github.com/faces-sh/skill/blob/main/skills/faces/references/STATES.md).
+
+The older premise-list commands (`state:add --premise`, `state:items`, `state:compact`,
+`state:close`) still work. States were called conversations, and before that sessions: the
+`conversation:*` and `session:*` commands still name the same thing.
 
 ## Authentication
 

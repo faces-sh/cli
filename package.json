@@ -109,7 +109,7 @@
         "description": "Compare a face against a reference model on its own material"
       },
       "state": {
-        "description": "States: the situation your agent builds, kept on the server, with premises, their status and what they depend on"
+        "description": "States: the proof in progress your agent builds, kept on the server: goals, their refinement, tests and claims. state:create --use makes one for this directory"
       },
       "conversation": {
         "description": "The old name for state"
@@ -119,6 +119,9 @@
       },
       "models": {
         "description": "The models you can name, with their prices"
+      },
+      "premise": {
+        "description": "Premises in a state: add, edit, get, delete and claim them; refine, choices and decide ask a face"
       }
     }
   },

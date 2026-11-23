@@ -6,6 +6,8 @@ import {
   MAX_CONVERSATION_ITEMS,
   PREMISE_DESCRIPTION_FLAG_DESCRIPTION,
   PREMISE_DEPENDS_ON_FLAG_DESCRIPTION,
+  PREMISE_ORIGIN_FLAG_DESCRIPTION,
+  PREMISE_ROLE_FLAG_DESCRIPTION,
   PREMISE_FLAG_DESCRIPTION,
   PREMISE_STATUS_FLAG_DESCRIPTION,
   PremiseState,
@@ -34,6 +36,7 @@ export default class ConversationAdd extends BaseCommand {
     '<%= config.bin %> <%= command.id %> fs_STATE_ID --premise rent_rises="no rise" --premise-status rent_rises=invalidated',
     '<%= config.bin %> <%= command.id %> fs_STATE_ID --premise can_afford=false --premise-description can_afford="we can carry the rent" --premise-depends-on can_afford=rent_rises',
     '<%= config.bin %> <%= command.id %> fs_STATE_ID --premise budget_usd=50000 --premise-description budget_usd="the most we can spend this year"',
+    '<%= config.bin %> <%= command.id %> fs_STATE_ID --premise ship_by=friday --premise-description ship_by="when we want it shipped" --premise-role ship_by=wanted --premise-origin ship_by=human',
     '<%= config.bin %> <%= command.id %> fs_STATE_ID -m "The vendor sent their audit report."',
   ]
 
@@ -44,6 +47,8 @@ export default class ConversationAdd extends BaseCommand {
     'premise-description': Flags.string({description: PREMISE_DESCRIPTION_FLAG_DESCRIPTION, multiple: true}),
     'premise-status': Flags.string({description: PREMISE_STATUS_FLAG_DESCRIPTION, multiple: true}),
     'premise-depends-on': Flags.string({description: PREMISE_DEPENDS_ON_FLAG_DESCRIPTION, multiple: true}),
+    'premise-role': Flags.string({description: PREMISE_ROLE_FLAG_DESCRIPTION, multiple: true}),
+    'premise-origin': Flags.string({description: PREMISE_ORIGIN_FLAG_DESCRIPTION, multiple: true}),
   }
 
   static args = {
@@ -56,7 +61,8 @@ export default class ConversationAdd extends BaseCommand {
 
     let items: Array<Record<string, unknown>>
     try {
-      items = clientItems(flags.message, parsePremises(flags.premise, flags['premise-description'], flags['premise-status'], flags['premise-depends-on']))
+      items = clientItems(flags.message, parsePremises(flags.premise, flags['premise-description'], flags['premise-status'], flags['premise-depends-on'],
+        flags['premise-role'], flags['premise-origin']))
     } catch (err) {
       this.error(err instanceof Error ? err.message : String(err))
     }

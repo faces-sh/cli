@@ -537,6 +537,54 @@ export class FacesClient {
     return resp.json()
   }
 
+  /**
+   * A foreman route on a state: premise:* and state:*. The server answers every one,
+   * success or refusal, as {object: "state.reply", text, ...}, and `text` is what is printed,
+   * so a refusal in that shape comes back rather than being thrown. Anything else that is not
+   * ok (an auth failure, a missing route) is thrown as usual. Sends FACES_SESSION as the
+   * X-Faces-Session header, which the server records as the writer's session.
+   */
+  async stateReply(
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    path: string,
+    opts: {body?: unknown; params?: Record<string, string>} = {},
+  ): Promise<{status: number; ok: boolean; data: Record<string, unknown>}> {
+    let url = this.url(path)
+    if (opts.params && Object.keys(opts.params).length > 0) url += '?' + new URLSearchParams(opts.params).toString()
+    const headers: Record<string, string> = {...this.authHeader()}
+    const withBody = method === 'POST' || method === 'PATCH'
+    if (withBody) headers['Content-Type'] = 'application/json'
+    const session = process.env.FACES_SESSION?.trim()
+    if (session) headers['X-Faces-Session'] = session
+    const resp = await this.send(path, url, {
+      method,
+      headers,
+      body: withBody ? JSON.stringify(opts.body ?? {}) : undefined,
+    })
+    if (resp.ok) {
+      const body = (await resp.json()) as Record<string, unknown>
+      // a model route held open past ~40s has already sent its 200, so a refusal after
+      // that arrives as `held_error` ({detail, error: {message, status, ...}}), with
+      // X-Faces-Held: 1. It is the refusal, with its real status.
+      const held = resp.headers.get('x-faces-held') === '1' && body?.object !== 'state.reply' ? heldChatError(body) : undefined
+      if (held) {
+        this.lastError = held
+        return {status: held.statusCode, ok: false, data: {...body, error: held.message, text: held.message, held: true}}
+      }
+      return {status: resp.status, ok: true, data: body}
+    }
+    let data: Record<string, unknown> | undefined
+    try {
+      data = (await resp.clone().json()) as Record<string, unknown>
+    } catch {
+      data = undefined
+    }
+    if (data && data.object === 'state.reply' && typeof data.text === 'string') {
+      return {status: resp.status, ok: false, data}
+    }
+    throw await this.parseError(resp)
+  }
+
   async postWithHeaders(path: string, opts: {requireJwt?: boolean; body?: unknown} = {}): Promise<ResponseWithHeaders> {
     const resp = await this.send(path, this.url(path), {
       method: 'POST',

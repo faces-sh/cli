@@ -62,6 +62,9 @@ import {pollCompileProgress, pollUntilPaused} from '../dist/poll.js'
 import {childPath} from '../dist/paths.js'
 import {score10} from '../dist/fidelity.js'
 import {resultLines, benchmarkHint} from '../dist/benchmark.js'
+import {parseWeightedDependsOn, entryText} from '../dist/conversation.js'
+import {pickParallel, nextLines, synopsisLines} from '../dist/synopsis.js'
+import {weighLines} from '../dist/commands/decide.js'
 import {conversationHint, parsePremises, parseDependsOn, premiseValue, conversationFields, clientItems, conversationLines, itemLines, premiseLines, staleDecisionLines, statusChangeLines} from '../dist/conversation.js'
 import {choicesLines, choicesHint} from '../dist/choices.js'
 import {mediaLines, mediaOf} from '../dist/media.js'
@@ -1168,6 +1171,9 @@ async function groupNames() {
       res.writeHead(200, {'content-type': 'application/json'})
       if (req.url.startsWith('/v1/me/groups')) return res.end(JSON.stringify({data: [{id: GID, name: 'Panel', kind: 'group', member_count: 2}]}))
       if (req.url.endsWith('/tags')) return res.end(JSON.stringify({tags: ['x']}))
+      if (req.url.startsWith('/v1/faces?') && req.url.includes('for=')) {
+        return res.end(JSON.stringify({data: Array.from({length: 13}, (_, i) => ({alias: `f${i}`, name: `F${i}`, fit: 0.9 - i / 100})), has_more: false}))
+      }
       if (req.url.startsWith('/v1/faces?') || req.url.startsWith('/v1/faces/?')) return res.end(JSON.stringify({data: [], has_more: false}))
       res.end(JSON.stringify({ok: true}))
     })
@@ -1184,6 +1190,16 @@ async function groupNames() {
     eq('group:tag:list', [r.code, hits.at(-1)], [0, `GET /v1/groups/${GID}/tags`])
     r = await run(['group:members', GID])
     eq('group:members', hits.at(-1), `GET /v1/groups/${GID}/members`)
+    r = await run(['face:list', '--for', 'a dinner'])
+    eq('face:list --for: the best 10, then how many more and how to see them',
+      [r.code, r.out.trim().split('\n').filter((l) => /^0\.\d\d  f\d+/.test(l)).length, /^0\.90  f0 /.test(r.out), /3 more faces fit less well\. --limit N shows the first N; --limit 0 shows all\.\s*$/.test(r.out)],
+      [0, 10, true, true])
+    r = await run(['face:list', '--for', 'a dinner', '--limit', '0'])
+    eq('face:list --for --limit 0: all of them, no footer', [r.out.trim().split('\n').length, /more face/.test(r.out)], [13, false])
+    r = await run(['face:list', '--for', 'a dinner', '--limit', '2', '--json'])
+    eq('face:list --limit 2 --json', [JSON.parse(r.out).data.map((f) => f.alias), JSON.parse(r.out).more], [['f0', 'f1'], 11])
+    r = await run(['face:list'])
+    eq('face:list without --for or --limit: unchanged, no footer', /more face/.test(r.out), false)
     r = await run(['face:list', '--group', GID])
     eq('face:list --group sends group_id', [r.code, hits.some((h) => h.includes(`group_id=${GID}`))], [0, true])
     const before = hits.length
@@ -1501,11 +1517,25 @@ eq('premises: descriptions matched by key, not position',
   [{key: 'a', value: 1, description: 'the budget'}, {key: 'b', value: false, description: 'the vendor is certified'}])
 const premiseError = (p, d) => { try { parsePremises(p, d); return undefined } catch (e) { return e.message } }
 const premiseError2 = (p, d, st, dep) => { try { parsePremises(p, d, st, dep); return '' } catch (e) { return e.message } }
+const premiseError2b = (p, roles, origins) => { try { parsePremises(p, [], [], [], roles, origins); return '' } catch (e) { return e.message } }
 eq('premises: no = is refused', /takes key=value \(got 'oops'\)/.test(premiseError(['oops'])), true)
 eq('premises: empty key is refused', /takes key=value/.test(premiseError(['=1'])), true)
-eq('premises: a bad key is refused before sending', /1 to 64 letters, digits, _ or - \(got 'has space'\)/.test(premiseError(['has space=1'])), true)
-eq('premises: a 65-character key is refused', /1 to 64/.test(premiseError([`${'k'.repeat(65)}=1`])), true)
-eq('premises: a 64-character key is taken', parsePremises([`${'k'.repeat(64)}=1`]).length, 1)
+eq('premises: a key is plain text', parsePremises(['everyone can eat everything served=no', 'costs under $100?=yes', 'Resolve "can eat"=check']),
+  [{key: 'everyone can eat everything served', value: 'no'}, {key: 'costs under $100?', value: 'yes'}, {key: 'Resolve "can eat"', value: 'check'}])
+eq('premises: a key with = goes in double quotes', parsePremises(['"a=b"=yes', '"say \\"hi\\""=1']), [{key: 'a=b', value: 'yes'}, {key: 'say "hi"', value: 1}])
+eq('premises: a key is trimmed', parsePremises([' my key =1']), [{key: 'my key', value: 1}])
+eq('premises: a key on two lines is refused before sending', /plain text of 1 to 120 characters on one line/.test(premiseError(['two\nlines=1'])), true)
+eq('premises: a tab is refused', /no control characters/.test(premiseError(['a\tb=1'])), true)
+eq('premises: a 121-character key is refused', /1 to 120/.test(premiseError([`${'k'.repeat(121)}=1`])), true)
+eq('premises: a 120-character key is taken', parsePremises([`${'k'.repeat(120)}=1`]).length, 1)
+eq('premises: an old key is taken as before', parsePremises(['budget_usd-2=1']), [{key: 'budget_usd-2', value: 1}])
+eq('premises: a quoted key needs = after it', /after a quoted key comes =/.test(premiseError(['"a"b=1'])), true)
+eq('premises: a description, status and depends_on name a plain-text key',
+  parsePremises(['costs under $100?=yes', '"a=b"=1'], ['costs under $100?=the budget', '"a=b"=x'], ['costs under $100?=assumed'], ['costs under $100?="a=b"']),
+  [{key: 'costs under $100?', value: 'yes', description: 'the budget', status: 'assumed', depends_on: ['a=b']}, {key: 'a=b', value: 1, description: 'x'}])
+eq('depends_on: plain-text keys, comma separated', parseDependsOn('Resolve "can eat", costs under $100?,dec_1'), ['Resolve "can eat"', 'costs under $100?', 'dec_1'])
+eq('depends_on: a key with a comma goes in double quotes', parseDependsOn('"x, y",b, "c"'), ['x, y', 'b', 'c'])
+eq('depends_on: after a quoted key comes a comma', /after a quoted key comes a comma/.test((() => { try { parseDependsOn('"x" y'); return '' } catch (e) { return e.message } })()), true)
 eq('premises: a key twice is refused', /sets 'a' twice/.test(premiseError(['a=1', 'a=2'])), true)
 eq('premises: a description with no premise is refused', /names 'b', which no --premise sets/.test(premiseError(['a=1'], ['b=x'])), true)
 eq('premises: an empty description is refused', /is empty/.test(premiseError(['a=1'], ['a=  '])), true)
@@ -1526,9 +1556,64 @@ eq('turn fields: status and depends_on go with the premise',
   conversationFields({conversation: 'fs_1', premise: ['a=1', 'b=2'], 'premise-status': ['a=Assumed'], 'premise-depends-on': ['b=a, dec_1,a']}),
   {conversation: 'fs_1', premises: [{key: 'a', value: 1, status: 'assumed'}, {key: 'b', value: 2, depends_on: ['a', 'dec_1']}]})
 eq('premises: depends_on= clears it', parsePremises(['a=1'], [], [], ['a=']), [{key: 'a', value: 1, depends_on: []}])
+eq('premises: role and origin', parsePremises(['a=1', 'b=2'], [], [], [], ['a=Goal'], ['a=human', 'b= tool ']),
+  [{key: 'a', value: 1, role: 'goal', origin: 'human'}, {key: 'b', value: 2, origin: 'tool'}])
+eq('premises: role= and origin= clear them', parsePremises(['a=1'], [], [], [], ['a='], ['a=']), [{key: 'a', value: 1, role: null, origin: null}])
+eq('premises: a role other than goal or test is refused', /--premise-role for 'a' is one of goal, test, or a= to clear it \(got 'wanted'\)/.test(premiseError2b(['a=1'], ['a=wanted'], [])), true)
+eq('premises: an unknown origin is refused', /--premise-origin for 'a' is one of human, agent, tool, web/.test(premiseError2b(['a=1'], [], ['a=user'])), true)
+eq('premises: a role with no premise is refused', /--premise-role names 'b', which no --premise sets/.test(premiseError2b(['a=1'], ['b=goal'], [])), true)
+eq('premises: two origins for one key are refused', /sets 'a' twice/.test(premiseError2b(['a=1'], [], ['a=human', 'a=agent'])), true)
+eq('turn fields: role and origin go with the premise',
+  conversationFields({conversation: 'fs_1', premise: ['a=1'], 'premise-role': ['a=goal'], 'premise-origin': ['a=agent']}),
+  {conversation: 'fs_1', premises: [{key: 'a', value: 1, role: 'goal', origin: 'agent'}]})
+eq('premise lines: role and origin', premiseLines({g: {value: 'ship', status: 'stated', role: 'wanted', origin: 'human'}}),
+  ['premises:', '  g = "ship"  [wanted; from human]'])
 eq('premises: an unknown status is refused', /is one of stated, verified, assumed, unresolved, invalidated \(got 'maybe'\)/.test(premiseError2(['a=1'], [], ['a=maybe'])), true)
 eq('premises: a status for no premise is refused', /names 'b', which no --premise sets/.test(premiseError2(['a=1'], [], ['b=verified'])), true)
 eq('premises: a premise resting on itself is refused', /cannot depend on itself/.test(premiseError2(['a=1'], [], [], ['a=a'])), true)
+// weighted --premise-depends-on entries
+eq('weighted depends_on: plain, or, or with p, and with p and decision',
+  parseWeightedDependsOn('a,b:or,c:or:0.7,d:and:0.5@dec_x'),
+  ['a', {id: 'b', kind: 'or'}, {id: 'c', kind: 'or', p: 0.7}, {id: 'd', kind: 'and', p: 0.5, decision: 'dec_x'}])
+eq('weighted depends_on: a quoted key takes its weight after the quote', parseWeightedDependsOn('"x, y":or:0.3, "k:or"'),
+  [{id: 'x, y', kind: 'or', p: 0.3}, 'k:or'])
+eq('weighted depends_on: a plain key with a colon stays a key', parseWeightedDependsOn('note: later,a:b'), ['note: later', 'a:b'])
+for (const [raw, says] of [['a:or:1.5', 'number from 0 to 1'], ['a:or:x', 'number from 0 to 1'], ['a@dec_1', 'a kind before its decision'],
+  ['a,a:or', 'twice'], [':or:0.5', 'needs an id'], ['"a":xor', 'is not :and or :or']]) {
+  const msg = (() => { try { parseWeightedDependsOn(raw); return '' } catch (e) { return e.message } })()
+  eq(`weighted depends_on refused: ${raw}`, msg.includes(says), true)
+}
+eq('weighted depends_on: plain duplicates fold, as before', parseWeightedDependsOn('a, a,b'), ['a', 'b'])
+eq('weighted depends_on: through --premise-depends-on', parsePremises(['task=1'], [], [], ['task=a:or:0.6,b:or:0.4']),
+  [{key: 'task', value: 1, depends_on: [{id: 'a', kind: 'or', p: 0.6}, {id: 'b', kind: 'or', p: 0.4}]}])
+eq('weighted depends_on: not on itself', /cannot depend on itself/.test((() => { try { parsePremises(['t=1'], [], [], ['t=t:or']); return '' } catch (e) { return e.message } })()), true)
+eq('premise role: test is taken', parsePremises(['t=1'], [], [], [], ['t=test'])[0].role, 'test')
+eq('premise role: rule is not', /role/.test((() => { try { parsePremises(['t=1'], [], [], [], ['t=rule']); return '' } catch (e) { return e.message } })()), true)
+eq('an edge prints with its kind and p', [entryText('a'), entryText({id: 'b', kind: 'or', p: 0.7}), entryText({id: 'c', kind: 'and', p: 0.5, decision: 'dec_1'})],
+  ['a', 'b (or 0.7)', 'c (and 0.5 by dec_1)'])
+eq('premises print their weighted edges', premiseLines({task: {value: 'ship', status: 'stated', role: 'wanted',
+  depends_on: [{id: 'a', kind: 'and', p: 0.8}, 'b']}, opt: {value: 'x', status: 'invalidated', face: 'ada', reason: 'pruned by dec_1'}}),
+['premises:', '  task = "ship"  [rests on a (and 0.8), b; wanted]', '  opt = "x"  [invalidated; proposed by @ada; pruned by dec_1]'])
+// the swarm: one item from each parallel group, heaviest first
+const SYN = {done: false, next: 'g', text: 'Next goal: g.\n- test a: write one [weight 1]',
+  outline: 'stated g [wanted]\n  stated (and) a',
+  ready: [{key: 'a', action: 'test', weight: 1, path: ['g', 'a']}, {key: 'b', action: 'test', weight: 0.5, path: ['g', 'b']},
+    {key: 'c', action: 'decide', weight: 0.5, path: ['g', 'c']}],
+  groups: [{weight: 1, items: [{key: 'a', action: 'test', weight: 1}, {key: 'b', action: 'test', weight: 0.5}]},
+    {weight: 0.5, items: [{key: 'c', action: 'decide', weight: 0.5}]}], claims: []}
+eq('state:next picks one per group', pickParallel(SYN, 5).map((f) => f.key), ['a', 'c'])
+eq('state:next takes at most N', pickParallel(SYN, 1).map((f) => f.key), ['a'])
+eq('state:next lines', nextLines(SYN, pickParallel(SYN, 2)),
+  ['1. test a   [weight 1]', '   for: g', '2. decide c   [weight 0.5]', '   for: g', '', '1 more ready item(s); 2 parallel group(s) in all.'])
+eq('state:next when all is claimed', nextLines({claims: [{id: 'clm_1', key: 'a', agent: 'w1'}], ready: [], groups: []}, []),
+  ['Nothing ready: every ready item is claimed: a (w1).'])
+eq('state:synopsis lines: the text, then the outline', synopsisLines(SYN),
+  ['Next goal: g.', '- test a: write one [weight 1]', '', 'Outline:', '  stated g [wanted]', '    stated (and) a'])
+eq('decide --weigh lines', weighLines({weigh: {written: true, premise: 'p', kind: 'or', cutoff: 0.85, decision: 'dec_1',
+  edges: [{id: 'a', p: 0.9}, {id: 'b', p: 0.1}], pruned: ['b'], side_node: 'sn_1'}}),
+['p: its or edges, weighed by dec_1', '  0.9   a', '  0.1   b   pruned', '', 'Pruned (set invalidated): the alternatives outside 0.85 of the probability.', 'side node: sn_1'])
+eq('decide --weigh when nothing was written', weighLines({weigh: {written: false, reason: 'the decision model gave no probabilities'}}),
+  ['Nothing was written: the decision model gave no probabilities.'])
 eq('depends_on: at most 200', /at most 200/.test((() => { try { parseDependsOn(Array.from({length: 201}, (_, i) => `k${i}`).join(',')); return '' } catch (e) { return e.message } })()), true)
 eq('client items: premises first, then messages', clientItems(['hi'], [{key: 'a', value: 1}]), [{key: 'a', value: 1}, {type: 'message', role: 'user', content: 'hi'}])
 
@@ -1612,14 +1697,25 @@ eq('reply text by endpoint', [replyText({choices: [{message: {content: 'a'}}]}, 
 eq('choices lines: numbered options and usage', choicesLines({object: 'choices', model: '@alice:maestro-1',
   choices: [{name: 'Take the offer', description: 'It pays in time.'}, {name: 'Negotiate'}], usage: {input_tokens: 1243, output_tokens: 250}}), [
   '1. Take the offer', '   It pays in time.', '2. Negotiate', '', '@alice:maestro-1: 1,243 input, 250 output tokens'])
+eq('choices lines: in a state, each option id and the list id', choicesLines({object: 'choices', model: '@alice:maestro-1',
+  choices: [{id: 'opt_a', name: 'Take the offer'}, {id: 'opt_b', name: 'Negotiate', description: 'Ask for more.'}], choices_item: 'cho_1'}), [
+  '1. Take the offer   [opt_a]', '2. Negotiate   [opt_b]', '   Ask for more.', '',
+  'Added to the state as cho_1. Name an option id (or cho_1 for all of them) in --premise-depends-on or decide --depends-on.'])
 eq('choices lines: the question it would ask', choicesLines({object: 'choices.question', model: '@alice:maestro-1', question: 'Why?', alternatives: ['How?']}), [
   '@alice would ask: Why?', '', 'Or:', '  - How?', '', 'Ask it with --question to get the options.'])
 eq('choices hint: a long situation goes in a state', /faces state:create[\s\S]*--state-id/.test(choicesHint(422, 'This description is 5201 tokens; version 23 reads prose of at most 3,000.', '@alice:maestro-1')), true)
 eq('choices hint: nothing compiled names the upload', choicesHint(409, '@alice has nothing compiled, so ...', '@alice:maestro-1'), 'Give it a first source: faces compile:upload alice --file <file>.')
+eq('choices hint: an unknown depends_on names the listing', choicesHint(422, '`depends_on` names no premise or decision (or choices option) in this conversation: x', '@alice:maestro-1'), 'Name premise keys, decision ids and choices ids already in the state (faces state:items <id>).')
 eq('choices hint: another 422 adds nothing', choicesHint(422, '`model` is required', '@alice:maestro-1'), undefined)
 eq('conversation hint: a new premise names the flag to add',
   conversationHint(new FacesAPIError(422, "premise 'rates' is new: give its `description` (what it means, in plain words)")),
   'Say what it means: --premise-description rates="what it means, in plain words"')
+eq('conversation hint: a new plain-text key is quoted for the shell',
+  conversationHint(new FacesAPIError(422, "premise 'costs under $100?' is new: give its `description` (what it means, in plain words)")),
+  "Say what it means: --premise-description 'costs under $100?=what it means, in plain words'")
+eq('conversation hint: a key with quotes and =',
+  conversationHint(new FacesAPIError(422, `premise "it's a=b" is new: give its \`description\``)),
+  `Say what it means: --premise-description '"it'\\''s a=b"=what it means, in plain words'`)
 eq('conversation hint: another 422 adds nothing', conversationHint(new FacesAPIError(422, '`causes_visible` is true or false')), undefined)
 eq('stale decisions: none prints nothing', [staleDecisionLines([]), staleDecisionLines(undefined)], [[], []])
 eq('stale decisions: what changed under each', staleDecisionLines([{call_id: 'dec_1', question: {id: 'sign', instructions: 'Sign the contract?'}, choice: 'no', face: 'alice', changed: {vendor_certified: {was: true, now: false}}}]), [
@@ -1627,6 +1723,125 @@ eq('stale decisions: what changed under each', staleDecisionLines([{call_id: 'de
   '  alice: Sign the contract? -> no   [dec_1]',
   '    vendor_certified: was true, now false',
 ])
+
+// a question option as the question itself, in each form the face writes it
+{
+  const {asked} = await import('../dist/refine.js')
+  eq('asked: the prescribed form', asked({name: 'x', description: 'Ask the human: Is there a fridge?, because only they know.'}), 'Is there a fridge?')
+  eq('asked: quoted after the lead', asked({name: 'x', description: 'Ask the human: "Is there a fridge?", because only they know.'}), 'Is there a fridge?')
+  eq('asked: quoted, no lead', asked({name: 'x', description: '"Is the host happy with the menu?", because their answer settles it.'}), 'Is the host happy with the menu?')
+  eq('asked: "Ask the human," with a comma, unclosed', asked({name: 'x', description: 'Ask the human, "What drinks are you considering?'}), 'What drinks are you considering?')
+  eq('asked: not a question, kept whole', asked({name: 'x', description: 'Confirm the budget.'}), 'Confirm the budget.')
+}
+
+// a state for premise:refine, kept in memory: the loop's calls are recorded in order
+const R = {calls: [], premises: {}}
+function refineReset() {
+  R.calls = []
+  R.matches = []
+  R.sameP = 0
+  R.allFail = false
+  R.tie = false
+  R.premises = {g: {key: 'g', number: '1', value: 'Cold drinks', role: 'goal', origin: 'agent', status: 'unresolved', truth: 'open',
+    op: null, children: [], on: [], refinement: null, await: null}}
+}
+function refineStub(req, body, send) {
+  const url = req.url
+  R.calls.push({method: req.method, url, body})
+  if (url.startsWith('/v1/states/fs_r/proof') && /query=/.test(url)) return send(200, {object: 'state.proof', premises: [], matches: (R.matches ?? []).map(([key, score]) => ({key, score}))})
+  if (url.startsWith('/v1/states/fs_r/proof')) return send(200, {object: 'state.proof', premises: Object.values(R.premises), summary: []})
+  if (url.startsWith('/v1/states/fs_r/premise?')) return send(200, {object: 'state.proof', text: '[ ] 1 g  AND', matches: []})
+  if (url === '/v1/states/fs_r/premises' && req.method === 'PATCH') {
+    Object.assign(R.premises[body.key], body.refinement !== undefined ? {refinement: body.refinement} : {}, body.await ? {await: body.await} : {})
+    return send(200, {object: 'state.reply', result: 'Edited.', text: 'Edited.'})
+  }
+  if (url === '/v1/states/fs_r/premises' && req.method === 'POST') {
+    R.premises[body.key] = {key: body.key, number: null, value: body.value, role: body.role ?? null, origin: 'agent', status: 'unresolved',
+      truth: 'open', op: null, children: [], on: body.on ?? [], refinement: null, await: null}
+    if (body.and) { R.premises[body.and].children.push(body.key); R.premises[body.and].op = 'and' }
+    return send(200, {object: 'state.reply', result: 'Added.', text: 'Added.'})
+  }
+  if (url === '/v1/billing/balance') {
+    R.balance = (R.balance ?? 10) - 0.25
+    return send(200, {balance_usd: R.balance})
+  }
+  if (url === '/v1/choices' && body.options) {
+    // the server's exact state-wide link: an option that is a premise's own key and value
+    const linked = body.options.filter((o) => R.premises[o.name] && R.premises[o.name].value === o.description
+      && !R.premises[body.into].children.includes(o.name))
+    for (const o of linked) R.premises[body.into].children.push(o.name)
+    if (linked.length) {
+      return send(200, {object: 'choices.written', new: [], matched: [], linked: linked.map((o) => o.name), refused: [], usage: {input_tokens: 0, output_tokens: 0}})
+    }
+    const fresh = body.options.filter((o) => !R.premises[o.name])
+    for (const o of fresh) {
+      R.premises[o.name] = {key: o.name, number: null, value: o.description, role: null, origin: 'agent', status: 'unresolved', truth: 'open',
+        op: null, children: [], on: [], refinement: null, await: null}
+      R.premises[body.into].children.push(o.name)
+      R.premises[body.into].op = body.kind
+    }
+    return send(200, {object: 'choices.written', new: fresh.map((o) => o.name), matched: body.options.filter((o) => !fresh.includes(o)).map((o) => o.name),
+      usage: {input_tokens: 0, output_tokens: 0}})
+  }
+  if (url === '/v1/choices') {
+    const usage = {input_tokens: 10, output_tokens: 5}
+    if (/broken into the conditions/.test(body.instructions ?? '')) {
+      return send(200, {object: 'choices', usage, choices: [
+        {name: 'Chilled', description: 'It holds only if: the drinks were chilled for an hour.'},
+        {name: 'Restated', description: 'It holds only if: the drinks are cold, restated.'},
+        {name: 'Ice', description: 'It holds only if: there is ice for every glass.'}]})
+    }
+    if (/leave out a condition/.test(body.instructions ?? '')) {
+      // round 1 finds one more; round 2 re-proposes it (matched), so the loop stops
+      return send(200, {object: 'choices', usage, choices: [{name: 'Fridge', description: 'It holds only if: the fridge is on.'}]})
+    }
+    if (/Which guests/.test(body.instructions ?? '')) {
+      return send(200, {object: 'choices', usage, choices: [{name: 'Guests', description: 'the six guests and what each cannot eat'}]})
+    }
+    if (/Which dinners/.test(body.instructions ?? '')) {
+      return send(200, {object: 'choices', usage, choices: [{name: 'Vegan menu', description: 'curry, quinoa salad, mango sorbet'},
+        {name: 'Gluten-free menu', description: 'Curry, quinoa salad, mango sorbet.'}]})
+    }
+    if (/Which menus/.test(body.instructions ?? '')) {
+      return send(200, {object: 'choices', usage, choices: [
+        {name: 'Safe menu 1', description: 'curry, quinoa salad, mango sorbet'},
+        {name: 'Safe menu 2', description: 'pie, bread, brownies (with a nut crust, and more words here to run the statement well past one hundred and twenty characters'},
+        {name: 'Ask the guests', description: 'Ask each guest what they would like'}]})
+    }
+    if (/pinned to one meaning/.test(body.instructions ?? '')) {
+      return send(200, {object: 'choices', usage, choices: [{name: 'Dishes only', description: 'Take it to mean: the dishes'},
+        {name: 'With drinks', description: 'Take it to mean: the dishes and the drinks'}]})
+    }
+    if (/settled by one test/.test(body.instructions ?? '')) {
+      return send(200, {object: 'choices', usage, choices: [{name: 'T', description: `Passes only if: ${body.premise} is checked.`}]})
+    }
+    if (/settled by asking/.test(body.instructions ?? '')) {
+      return send(200, {object: 'choices', usage, choices: [{name: 'Ask', description: 'Ask the human: "Is there a fridge?", because only they know.'}]})
+    }
+    return send(200, {object: 'choices', usage, choices: []})
+  }
+  if (url === '/v1/decisions' && body.weigh) {
+    const kids = R.premises[body.weigh.premise].children
+    return send(200, {object: 'decision', usage: {input_tokens: 20, output_tokens: 1},
+      weigh: {premise: body.weigh.premise, kind: 'or', edges: kids.map((k, i) => ({id: k, p: R.tie ? 1 / kids.length : (i ? 0.1 : 0.9)})), written: true}})
+  }
+  if (url === '/v1/decisions') {
+    const usage = {input_tokens: 20, output_tokens: 1}
+    const q = body.questions ?? []
+    if (q[0]?.name === 'kind') {
+      const who = body.depends_on[0]
+      const pick = who === 'h' ? 'pin it to one meaning' : who === 'g' ? 'split it into conditions' : who === 'Fridge' ? 'ask the human' : 'one test settles it'
+      return send(200, {object: 'decision', usage, answers: [{type: 'choice', name: 'kind', choice: pick,
+        probabilities: q[0].choices.map((c) => ({value: c.value, probability: c.value === pick ? 0.8 : 0.2 / 3}))}]})
+    }
+    if (/the same condition as/.test(q[0]?.instructions ?? '')) {
+      return send(200, {object: 'decision', usage, answers: [{type: 'predicate', name: q[0].name, probability: R.sameP}]})
+    }
+    return send(200, {object: 'decision', usage, answers: q.map((x) => ({type: 'predicate', name: x.name,
+      probability: R.allFail || (/restated/.test(x.instructions) && /covers only part/.test(x.instructions)) ? 0.1 : 0.9}))})
+  }
+  return send(404, {detail: 'not in the refine stub'})
+}
 
 async function conversationsOverHttp() {
   const seen = []
@@ -1636,7 +1851,30 @@ async function conversationsOverHttp() {
     req.on('end', () => {
       const send = (status, body) => { res.writeHead(status, {'content-type': 'application/json'}); res.end(JSON.stringify(body)) }
       const body = b ? JSON.parse(b) : undefined
-      seen.push({method: req.method, url: req.url, body})
+      seen.push({method: req.method, url: req.url, body, session: req.headers['x-faces-session']})
+      // the state's routes answer a state.reply (writes) or a state.proof (reads); a key
+      // 'held' is another's claim; 'late' and 'slow' are held open
+      const fm = /^\/v1\/states\/(fs_\w+)\/(premises|premise|proof|note|claim|release|release-session)(\?|$)/.exec(req.url)
+      if (fm && fm[1] === 'fs_r') return refineStub(req, body, send)
+      if (req.url === '/v1/billing/balance' && R.refining) return refineStub(req, body, send)
+      if (fm) {
+        const reply = (result) => ({object: 'state.reply', result, summary: ['Open. Proved when 1 is refined.'],
+          text: `${result}\n\nOpen. Proved when 1 is refined.`})
+        if (body?.key === 'late' || body?.key === 'slow') {
+          res.writeHead(200, {'content-type': 'application/json', 'x-faces-held': '1'})
+          res.write('   ')
+          const late = {detail: 'the face cannot be read: @gone', error: {message: 'the face cannot be read: @gone', type: 'invalid_request_error', param: null, code: '409', status: 409}}
+          return setTimeout(() => res.end(JSON.stringify(body.key === 'late' ? late : reply('added slowly'))), 50)
+        }
+        if (body?.key === 'held') return send(409, {object: 'state.reply', error: 'Not written: "held" is claimed by w9 until 13:00', text: 'Not written: "held" is claimed by w9 until 13:00'})
+        if (fm[2] === 'proof' || fm[2] === 'premise') {
+          const fmt = new URL(req.url, 'http://x').searchParams.get('format')
+          if (fmt === 'json') return send(200, {object: 'state.proof', premises: [], summary: ['The state is empty.']})
+          return send(200, {object: 'state.proof', format: fmt, text: `[ ] 1 g (not refined)\n\nOpen. Proved when 1 is refined.`})
+        }
+        return send(200, reply(`did ${req.method} ${fm[2]} on ${fm[1]}`))
+      }
+      if (body?.state_id === 'fs_r' || body?.conversation === 'fs_r') return refineStub(req, body, send)
       const conv = {object: 'conversation', id: 'fs_1', model: body?.model ?? null, turns: 0, items: body?.items?.length ?? 0, causes_visible: body?.causes_visible ?? true, status: 'open'}
       if (req.url === '/v1/states' && req.method === 'POST') return send(200, conv)
       if (req.url === '/v1/states/gone') return send(404, {detail: 'no such conversation, or it has expired'})
@@ -1650,6 +1888,27 @@ async function conversationsOverHttp() {
           status_changes: [{kind: 'premise', key: 'vendor_certified', from: 'stated', to: 'invalidated', because: null}]})
       }
       if (req.url === '/v1/states/fs_1' && req.method === 'DELETE') return send(200, {id: 'fs_1', object: 'conversation.deleted', deleted: true})
+      if (req.url === '/v1/choices' && body?.into) {
+        return send(200, {object: 'choices', model: body.model, choices: [{id: 'opt_1', name: 'Strict', description: 'Refuse.', premise: 'Strict'},
+          {id: 'opt_2', name: 'fast', description: 'Quick.', premise: 'fast (p)'}], choices_item: 'cho_1',
+        into: {premise: body.into, kind: body.kind ?? 'or', side_node: 'sn_1'}, usage: {input_tokens: 5, output_tokens: 2}})
+      }
+      if (req.url === '/v1/decisions' && body?.weigh) {
+        return send(200, {object: 'decision', answers: [{type: 'choice', name: 'weigh', probabilities: [{value: 'a', probability: 0.9}, {value: 'b', probability: 0.1}]}],
+          decision_ids: {weigh: 'dec_1'}, weigh: {premise: body.weigh.premise, kind: 'or', cutoff: body.weigh.cutoff ?? 0.85,
+            edges: [{id: 'a', p: 0.9}, {id: 'b', p: 0.1}], pruned: ['b'], side_node: 'sn_2', written: true, decision: 'dec_1'}})
+      }
+      if (req.url.startsWith('/v1/states/fs_1/synopsis')) {
+        return send(200, {object: 'state.synopsis', done: false, next: 'g', text: 'Next goal: g.', outline: 'stated g [wanted]',
+          ready: [{key: 'a', action: 'test', weight: 1}, {key: 'taken', action: 'test', weight: 0.5}, {key: 'c', action: 'decide', weight: 0.4}],
+          groups: [{items: [{key: 'a', action: 'test'}]}, {items: [{key: 'taken', action: 'test'}]}, {items: [{key: 'c', action: 'decide'}]}], claims: []})
+      }
+      if (req.url === '/v1/states/fs_1/claims' && req.method === 'POST') {
+        if (body?.key === 'taken') return send(409, {detail: "'taken' is claimed by w9 until 2026-11-21T13:00:00+00:00"})
+        return send(200, {object: 'claim', id: `clm_${body.key}`, key: body.key, agent: body.agent, since: 'now', expires_at: 'later'})
+      }
+      if (req.url === '/v1/states/fs_1/claims/clm_a' && req.method === 'DELETE') return send(200, {object: 'claim.deleted', id: 'clm_a', deleted: true})
+      if (req.url === '/v1/states/fs_1/claims/clm_x' && req.method === 'DELETE') return send(404, {detail: "no claim 'clm_x' holds on this state"})
       if (req.url === '/v1/choices') {
         if (body?.model === '@bare:maestro-1') return send(409, {detail: '@bare has nothing compiled, so version 23 has nothing to propose from. Compile a source for it. Nothing was charged.'})
         if (!body?.instructions) return send(200, {object: 'choices.question', model: body?.model, question: 'Why?', alternatives: [], usage: {input_tokens: 5, output_tokens: 2}})
@@ -1670,6 +1929,10 @@ async function conversationsOverHttp() {
     child.stdin.end()
   })
   const last = (url) => seen.filter((s) => s.url === url).at(-1)?.body
+  const runIn = (cwd, args, extra = {}) => new Promise((r) => {
+    const child = execFile(process.execPath, [path.resolve('bin/run.js'), ...args], {env: {...env, ...extra}, cwd}, (err, stdout, stderr) => r({code: err?.code ?? 0, out: stdout + stderr, stdout}))
+    child.stdin.end()
+  })
   try {
     let r = await run(['conversation:create'])
     eq('conversation:create: no face, causes visible, no items', last('/v1/states'), {causes_visible: true})
@@ -1721,8 +1984,8 @@ async function conversationsOverHttp() {
     r = await run(['state:add', 'fs_1', '--premise', 'vendor_certified=false', '--premise-status', 'vendor_certified=invalidated'])
     eq('state:add: status sent with the premise', last('/v1/states/fs_1/items'), {items: [{key: 'vendor_certified', value: false, status: 'invalidated'}]})
     eq('state:add: status changes printed', /1 status changed:\n\s+premise vendor_certified: stated -> invalidated/.test(r.out), true)
-    r = await run(['state:create', 'alice'])
-    eq('state:create: the next step is choices', /faces choices @alice:maestro-1 --state-id fs_1/.test(r.out), true)
+    r = await run(['conversation:create', 'alice'])
+    eq('conversation:create: the next step is choices', /faces choices @alice:maestro-1 --state-id fs_1/.test(r.out), true)
 
     await run(['choices', '@alice:maestro-1', '--state', 'A chain opened.', '-q', 'What now?', '--max-choices', '3'])
     eq('choices: model, state, question and max sent', last('/v1/choices'), {model: '@alice:maestro-1', state: 'A chain opened.', instructions: 'What now?', max_choices: 3})
@@ -1756,6 +2019,234 @@ async function conversationsOverHttp() {
     eq('decide: the old face form is refused before sending', [r.code, /@alice:maestro-1/.test(r.out)], [2, true])
     r = await run(['decide', '@alice:maestro-1/jev-latest', '--state', 'Lease.'])
     eq('decide: a question is needed', [r.code, /Ask at least one question/.test(r.out)], [2, true])
+    // --into, --weigh, state:synopsis, state:next --parallel --claim, state:release
+    r = await run(['choices', '@alice:maestro-1', '--state-id', 'fs_1', '-q', 'Which way?', '--into', 'handle bad input', '--kind', 'or'])
+    eq('choices --into: into and kind sent', [last('/v1/choices').into, last('/v1/choices').kind], ['handle bad input', 'or'])
+    eq('choices --into: says where the options went and how to weigh them',
+      [/premise: fast \(p\)/.test(r.out), /handle bad input rests on \(or edges, side node sn_1\)/.test(r.out), /--weigh "handle bad input"/.test(r.out)], [true, true, true])
+    seen.length = 0
+    r = await run(['choices', '@alice:maestro-1', '--state', 'x', '-q', 'y', '--into', 'p'])
+    eq('choices --into needs a state', [r.code !== 0, seen.filter((x) => x.url === '/v1/choices').length], [true, 0])
+    r = await run(['decide', '@alice:maestro-1/jev-latest', '--conversation', 'fs_1', '--weigh', 'p', '--cutoff', '0.9'])
+    eq('decide --weigh: sent to /v1/decisions with the state and no question',
+      [last('/v1/decisions').weigh, last('/v1/decisions').conversation, 'questions' in last('/v1/decisions')], [{premise: 'p', cutoff: 0.9}, 'fs_1', false])
+    eq('decide --weigh: the weights printed', [/0\.9\s+a/.test(r.out), /0\.1\s+b\s+pruned/.test(r.out)], [true, true])
+    seen.length = 0
+    r = await run(['decide', '@alice:maestro-1/jev-latest', '--weigh', 'p'])
+    eq('decide --weigh needs a state', [r.code, /--conversation/.test(r.out), seen.filter((x) => x.url === '/v1/decisions').length], [2, true, 0])
+    r = await run(['decide', '@alice:maestro-1/jev-latest', '--conversation', 'fs_1', '--weigh', 'p', '--cutoff', '2'])
+    eq('decide --weigh: a bad cutoff is refused', [r.code, /--cutoff/.test(r.out)], [2, true])
+    // the state's commands print the server's text as it is; the state is .faces/state
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'faces-state-'))
+    r = await runIn(dir, ['state:get'])
+    eq('state:get with no state here is refused before sending', [r.code !== 0, /No state here/.test(r.out)], [true, true])
+    r = await runIn(dir, ['state:create', '--use'])
+    eq('state:create --use: writes .faces/state and prints the proof', [fs.readFileSync(path.join(dir, '.faces', 'state'), 'utf8').trim(),
+      /^Created an empty state, fs_1\./.test(r.out), /Open\. Proved when 1 is refined\./.test(r.out)], ['fs_1', true, true])
+    // state:create is the new surface only; its help names no face and no premise flags
+    r = await runIn(dir, ['state:create', '--help'])
+    eq('state:create --help: the new surface only', [r.code, /--use/.test(r.out), /--local/.test(r.out),
+      /--premise|\[FACE\]|formerly|--message|--causes-visible|budget_usd/.test(r.out)], [0, true, true, false])
+    r = await runIn(dir, ['state:create', 'alice'])
+    eq('state:create: a face argument is refused', r.code !== 0, true)
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'faces-state-'))
+    r = await runIn(dir2, ['state:create'])
+    eq('state:create without --use: the id and how to use it, no file written', [r.code, /^Created an empty state, fs_1\. faces state:use fs_1/.test(r.out),
+      fs.existsSync(path.join(dir2, '.faces'))], [0, true, false])
+    // in --jsonl, `on` is a JSON array or a comma list (read as --on reads it)
+    const jl = path.join(dir, 'p.jsonl')
+    fs.writeFileSync(jl, JSON.stringify({key: 'x', value: 'X', on: 'a, "b, c",d'}) + '\n' + JSON.stringify({key: 'y', value: 'Y', on: ['a', 'b, c']}) + '\n')
+    seen.length = 0
+    r = await runIn(dir, ['premise:add', '--jsonl', jl])
+    const posted = seen.filter((x) => x.url === '/v1/states/fs_1/premises').map((x) => x.body.on)
+    eq('premise:add --jsonl: on as a comma list is split; as an array it is kept', [r.code, posted], [0, [['a', 'b, c', 'd'], ['a', 'b, c']]])
+    fs.writeFileSync(jl, JSON.stringify({key: 'z', value: 'Z', on: '"a"x'}) + '\n')
+    seen.length = 0
+    r = await runIn(dir, ['premise:add', '--jsonl', jl])
+    eq('premise:add --jsonl: a bad on list is refused before sending, naming the line', [r.code !== 0, /line 1/.test(r.out), seen.length], [true, true, 0])
+    fs.mkdirSync(path.join(dir, 'sub'))
+    r = await runIn(path.join(dir, 'sub'), ['premise:add', 'the dinner', 'Dinner for six', '--role', 'goal', '--said', 'Plan a dinner.',
+      '--and', 'g', '--on', 'a,"b, c"', '--as', 'lead'], {FACES_SESSION: 'check:1'})
+    eq('premise:add: the body, the session header, the text verbatim', [last('/v1/states/fs_1/premises'), seen.at(-1).session, r.stdout],
+      [{key: 'the dinner', value: 'Dinner for six', and: 'g', on: ['a', 'b, c'], role: 'goal', said: 'Plan a dinner.', as: 'lead'}, 'check:1',
+        'did POST premises on fs_1\n\nOpen. Proved when 1 is refined.\n'])
+    r = await runIn(dir, ['premise:add', 'x', '1', '--and', 'a', '--or', 'b'])
+    eq('premise:add: --and and --or together are refused', r.code !== 0, true)
+    r = await runIn(dir, ['premise:add', 'held', 'x'])
+    eq('a refusal: exit 1, the reply on stderr', [r.code, r.stdout, /claimed by w9/.test(r.out)], [1, '', true])
+    fs.writeFileSync(path.join(dir, '.faces', 'state.local'), 'fs_2\n')
+    await runIn(dir, ['state:get', '--query', 'drinks'])
+    eq('state:get: .faces/state.local overrides .faces/state; --query', seen.at(-1).url, '/v1/states/fs_2/proof?format=text&query=drinks')
+    fs.rmSync(path.join(dir, '.faces', 'state.local'))
+    await runIn(dir, ['state:get', '--problog'])
+    eq('state:get --problog', seen.at(-1).url, '/v1/states/fs_1/proof?format=problog')
+    r = await runIn(dir, ['state:get', '--json'])
+    eq('state:get --json: the raw fields', [seen.at(-1).url, JSON.parse(r.out).object], ['/v1/states/fs_1/proof?format=json', 'state.proof'])
+    await runIn(dir, ['premise:get', 'g', '--depth', '2', '--up'])
+    eq('premise:get --depth --up', seen.at(-1).url, '/v1/states/fs_1/premise?key=g&format=text&depth=2&up=true')
+    await runIn(dir, ['premise:edit', 't', '--status', 'verified', '--tested', 'Menu 2', '--evidence', 'ok', '--as', 'b1'])
+    eq('premise:edit: a test run', [seen.at(-1).method, last('/v1/states/fs_1/premises')],
+      ['PATCH', {key: 't', status: 'verified', tested: 'Menu 2', evidence: 'ok', as: 'b1'}])
+    await runIn(dir, ['premise:edit', 'the menu', '--key', 'what we serve', '--value', '"x"', '--await', 'none', '--on', ''])
+    eq('premise:edit: rename, value, await, inputs cleared', last('/v1/states/fs_1/premises'),
+      {key: 'the menu', value: 'x', to: 'what we serve', await: 'none', on: []})
+    await runIn(dir, ['premise:delete', 'old', '--as', 'b1'])
+    eq('premise:delete', [seen.at(-1).method, seen.at(-1).url], ['DELETE', '/v1/states/fs_1/premises?key=old&as=b1'])
+    await runIn(dir, ['premise:claim', 'the menu', 'builder-A', '--ttl', '600'])
+    eq('premise:claim', last('/v1/states/fs_1/claim'), {key: 'the menu', agent: 'builder-A', ttl_seconds: 600})
+    await runIn(dir, ['premise:claim', 'the menu', '--release'])
+    eq('premise:claim --release', last('/v1/states/fs_1/release'), {key: 'the menu'})
+    await runIn(dir, ['premise:claim', '--release', '--session', 'check:1'])
+    eq('premise:claim --release --session: the session-end route', last('/v1/states/fs_1/release-session'), {session: 'check:1'})
+    r = await runIn(dir, ['premise:claim', 'the menu'])
+    eq('premise:claim needs who', [r.code !== 0, /Name who claims it/.test(r.out)], [true, true])
+    r = await runIn(dir, ['premise:add', 'late', 'x'])
+    eq('a held refusal (200, X-Faces-Held, held_error): exit 1, its message on stderr', [r.code, r.stdout, /the face cannot be read: @gone/.test(r.out)], [1, '', true])
+    r = await runIn(dir, ['premise:add', 'late', 'x', '--json'])
+    eq('a held refusal in --json: exit 1, the real status', [r.code, JSON.parse(r.out).error], [1, {message: 'the face cannot be read: @gone', status: 409}])
+    r = await runIn(dir, ['premise:add', 'slow', 'x'])
+    eq('a held reply is the reply', [r.code, /^added slowly\n/.test(r.stdout)], [0, true])
+    for (const gone of ['premise:await', 'premise:answer', 'premise:verify', 'premise:rename', 'premise:withdraw', 'premise:bug',
+      'state:brief', 'state:say', 'state:chat', 'state:next', 'state:synopsis', 'state:claim', 'state:release', 'state:choices', 'state:decide']) {
+      r = await runIn(dir, [gone, 'x'])
+      eq(`${gone} is gone`, r.code !== 0, true)
+    }
+    // the refine loop: the judges run BEFORE the options are written, so the restatement
+    // the gate drops is never sent; the gap check sees the state; a sub-goal only the human can
+    // settle awaits them with a question for them; the refinement is recorded
+    refineReset()
+    r = await runIn(dir, ['premise:refine', 'g', '--face', 'cook', '--state-id', 'fs_r', '--as', 'lead'])
+    const writes = R.calls.filter((c) => c.url === '/v1/choices' && c.body.options)
+    const firstJudge = R.calls.findIndex((c) => c.url === '/v1/decisions' && c.body.questions?.[0]?.type === 'predicate')
+    const firstWrite = R.calls.findIndex((c) => c.url === '/v1/choices' && c.body.options)
+    eq('refine: exit 0', r.code, 0)
+    eq('refine: the needs decision first, on decisions, with the face and jev-latest', [R.calls[1].url, R.calls[1].body.model, R.calls[1].body.questions[0].name],
+      ['/v1/decisions', '@cook:maestro-1/jev-latest', 'kind'])
+    eq('refine: the conditions prompt asks with the premise view (its children hidden)', [R.calls[2].body.premise, 'depends_on' in R.calls[2].body], ['g', false])
+    eq('refine: the judges run on clef before anything is written', [firstJudge < firstWrite, R.calls[firstJudge].body.model], [true, '@cook:maestro-1/clef'])
+    eq('refine: only what passed both judges is written, named by the face\'s own name for it, the lead off',
+      writes[0].body.options, [{name: 'Chilled', description: 'the drinks were chilled for an hour.'},
+        {name: 'Ice', description: 'there is ice for every glass.'}])
+    eq('refine: writes carry as and kind and', [writes[0].body.as, writes[0].body.kind, writes[0].body.into], ['lead', 'and', 'g'])
+    const gapAsk = R.calls.find((c) => c.url === '/v1/choices' && /leave out/.test(c.body.instructions ?? ''))
+    eq('refine: the gap check sees the state around g', [gapAsk.body.depends_on, 'premise' in gapAsk.body, gapAsk.body.max_choices], [['g'], false, 4])
+    eq('refine: the gap check adds the fridge, then stops when it is re-proposed', Object.keys(R.premises).sort(),
+      ['Chilled', 'Fridge', 'Ice', 'g'])
+    eq('refine: the fridge awaits the human, with its question as a note',
+      [R.premises['Fridge'].await, R.calls.find((c) => c.method === 'PATCH' && c.body.key === 'Fridge')?.body.note],
+      ['human', 'Is there a fridge?'])
+    eq('refine: the refinement is recorded complete', R.premises.g.refinement, 'complete')
+    eq('refine: the refinement is marked as refine\'s, not by hand',
+      R.calls.filter((c) => c.method === 'PATCH' && c.body.refinement !== undefined).map((c) => c.body.refined_by), ['refine'])
+    eq('refine: it reports the judges and counts the billed calls',
+      [/The face proposed 3 condition\(s\); 2 passed both judges\. Not written: "Restated"\./.test(r.out),
+        /\d+ billed call\(s\)/.test(r.out)], [true, true])
+    // nothing passes both judges: no refinement is recorded, and none is called sufficient
+    refineReset()
+    R.allFail = true
+    r = await runIn(dir, ['premise:refine', 'g', '--face', 'cook', '--state-id', 'fs_r'])
+    eq('refine: nothing kept, nothing recorded', [r.code, R.premises.g.refinement, /has no refinement; nothing was recorded/.test(r.out),
+      /sufficient/.test(r.out)], [0, null, true, false])
+    // the recheck: a rewritten goal's sub-goals are checked again; only the agent's own leaves are cut
+    refineReset()
+    Object.assign(R.premises.g, {op: 'and', refinement: 'incomplete', children: ['mine', 'said', 'a test']})
+    const leaf = (k, more) => ({key: k, number: null, value: k, role: null, origin: 'agent', status: 'unresolved', truth: 'open', op: null,
+      children: [], on: [], refinement: null, await: null, messages: [], ...more})
+    R.premises.mine = leaf('mine')
+    R.premises.said = leaf('said', {messages: [{kind: 'said', author: 'human'}]})
+    R.premises['a test'] = leaf('a test', {role: 'test'})
+    r = await runIn(dir, ['premise:refine', 'g', '--face', 'cook', '--state-id', 'fs_r'])
+    const rc = R.calls.find((c) => c.url === '/v1/decisions' && /was rewritten/.test(c.body.questions?.[0]?.instructions ?? ''))
+    eq('refine recheck: only the agent\'s own leaf is checked again', [r.code, rc?.body.questions.length, /"mine: mine"/.test(rc?.body.questions[0].instructions)], [0, 1, true])
+    // -r: breadth first; the AND children are refined (each into one test); the fridge stops on its
+    // await; it ends with the calls, the dollars the balance moved by, and the awaits
+    refineReset()
+    R.refining = true
+    r = await runIn(dir, ['premise:refine', 'g', '--face', 'cook', '--state-id', 'fs_r', '-r'])
+    R.refining = false
+    const kinds = R.calls.filter((c) => c.body?.questions?.[0]?.name === 'kind').map((c) => c.body.depends_on[0])
+    eq('refine -r: g first, then its children breadth first', kinds.slice(0, 1), ['g'])
+    eq('refine -r: each child refined into one test', ['Chilled', 'Ice']
+      .map((k) => R.premises[k].children.length === 1 && R.premises[R.premises[k].children[0]].role === 'test'), [true, true])
+    eq('refine -r: the last line; every branch ended before depth 3, so no limit is named',
+      [r.code, /Refined 3 premise\(s\): \d+ billed call\(s\), \$0\.2500 spent, 1 branch\(es\) stopped on an await \("Fridge"\)\./.test(r.out), /Stopped at depth/.test(r.out)],
+      [0, true, false])
+    refineReset()
+    R.refining = true
+    r = await runIn(dir, ['premise:refine', 'g', '--face', 'cook', '--state-id', 'fs_r', '-r', '--depth', '1'])
+    R.refining = false
+    eq('refine -r --depth 1: only g is refined, and the depth limit is named with what it left',
+      [r.code, /Refined 1 premise\(s\)/.test(r.out),
+        /Stopped at depth 1; 2 premise\(s\) below it are not refined \("Chilled", "Ice"\)\. Run again with --depth 2, or --depth all for no limit\./.test(r.out)],
+      [0, true, true])
+    refineReset()
+    R.refining = true
+    r = await runIn(dir, ['premise:refine', 'g', '--face', 'cook', '--state-id', 'fs_r', '-r', '--depth', 'all'])
+    R.refining = false
+    eq('refine -r --depth all: every branch ends, so no limit is named', [r.code, /Refined 3 premise\(s\)/.test(r.out), /Stopped at depth/.test(r.out)], [0, true, false])
+    r = await runIn(dir, ['premise:refine', 'g', '--face', 'cook', '--state-id', 'fs_r', '-r', '--depth', '0'])
+    eq('refine -r --depth 0 is refused', [r.code !== 0, /whole number from 1, or all/.test(r.out)], [true, true])
+    // premise:choices keys each candidate by what it says, the face's label only when it says nothing
+    refineReset()
+    r = await runIn(dir, ['premise:choices', 'g', '--face', 'cook', '--state-id', 'fs_r', '--question', 'Which menus?'])
+    eq('choices: a shared label keys by content (cut at a word, no open parenthesis); a name of its own is kept',
+      [r.code, R.calls.find((c) => c.body?.options)?.body.options.map((o) => o.name)],
+      [0, ['curry, quinoa salad, mango sorbet', 'pie, bread, brownies', 'Ask the guests']])
+    eq('choices: the refinement is marked as premise:choices\', not by hand',
+      R.calls.filter((c) => c.method === 'PATCH' && c.body.refinement !== undefined).map((c) => [c.body.key, c.body.refinement, c.body.refined_by]),
+      [['g', 'complete', 'choices']])
+    refineReset()
+    r = await runIn(dir, ['premise:choices', 'g', '--face', 'cook', '--state-id', 'fs_r', '--question', 'Which dinners?'])
+    eq('choices: two names for the same statement are one candidate', [r.code, R.calls.filter((c) => c.body?.options).map((c) => c.body.options.map((o) => o.name))],
+      [0, [['Vegan menu']]])
+    // state-wide near matches go to a billed same-condition decision before linking:
+    // a true pair links (fs_5bDT's 0.878), a false pair at a higher cosine does not (0.879)
+    for (const [score, p, links] of [[0.878, 0.9, true], [0.879, 0.1, false]]) {
+      refineReset()
+      Object.assign(R.premises.g, {op: 'and'})
+      R.premises.h = {key: 'h', number: null, value: 'the other branch', role: 'goal', origin: 'agent', status: 'unresolved', truth: 'open', op: 'and',
+        children: ['Guest list'], on: [], refinement: 'complete', await: null}
+      R.premises['Guest list'] = {key: 'Guest list', number: null, value: 'the six guests and their needs', role: null, origin: 'agent', status: 'unresolved',
+        truth: 'open', op: null, children: [], on: [], refinement: null, await: null}
+      R.matches = [['Guest list', score]]
+      R.sameP = p
+      r = await runIn(dir, ['premise:refine', 'h', '--face', 'cook', '--state-id', 'fs_r'])
+      refineReset()
+      Object.assign(R.premises.g, {op: 'or'})
+      R.premises['Guest list'] = {key: 'Guest list', number: null, value: 'the six guests and their needs', role: null, origin: 'agent', status: 'unresolved',
+        truth: 'open', op: null, children: [], on: [], refinement: null, await: null}
+      R.matches = [['Guest list', score]]
+      R.sameP = p
+      r = await runIn(dir, ['premise:choices', 'g', '--face', 'cook', '--state-id', 'fs_r', '--question', 'Which guests?'])
+      const sent = R.calls.find((c) => c.body?.options)?.body.options
+      const asked = R.calls.find((c) => /the same condition as/.test(c.body?.questions?.[0]?.instructions ?? ''))
+      eq(`same condition at ${score} (p ${p}): ${links ? 'linked' : 'written as new'}`,
+        [r.code, Boolean(asked), asked?.body.model, sent?.[0], R.premises.g.children.includes('Guest list')],
+        [0, true, '@cook:maestro-1/clef', links ? {name: 'Guest list', description: 'the six guests and their needs'}
+          : {name: 'Guests', description: 'the six guests and what each cannot eat'}, links])
+      eq(`same condition at ${score}: the reply ${links ? 'says it linked, with the p' : 'says nothing of a link'}`,
+        /"Guest list" already exists; linked it under "g" \(the same condition, p 0\.9\)/.test(r.out), links)
+    }
+    eq('choices: the question asks for a short name', /Name each option by what it is, in a few words/.test(R.calls.find((c) => c.url === '/v1/choices' && c.body.premise)?.body.instructions ?? ''), true)
+    // premise:decide only ranks: a tie leaves the premise open and not waiting; refine's meanings wait on the human
+    refineReset()
+    R.tie = true
+    Object.assign(R.premises.g, {op: 'or', children: ['a', 'b']})
+    R.premises.a = {key: 'a', number: null, value: 'a', role: null, origin: 'agent', status: 'unresolved', truth: 'open', op: null, children: [], on: [], refinement: null, await: null}
+    R.premises.b = {...R.premises.a, key: 'b', value: 'b'}
+    r = await runIn(dir, ['premise:decide', 'g', '--face', 'cook', '--state-id', 'fs_r'])
+    eq('decide: a tie ranks and never awaits', [r.code, R.premises.g.await, /awaits/.test(r.out)], [0, null, false])
+    refineReset()
+    R.tie = true
+    R.premises.h = {key: 'h', number: null, value: 'what it means', role: null, origin: 'agent', status: 'unresolved', truth: 'open', op: null, children: [], on: [], refinement: null, await: null}
+    r = await runIn(dir, ['premise:refine', 'h', '--face', 'cook', '--state-id', 'fs_r'])
+    eq('refine: a tie between meanings awaits the human', [r.code, R.premises.h.await, /only the human can settle which is meant/.test(r.out)], [0, 'human', true])
+    // a test or a fact is refused before any call
+    refineReset()
+    R.premises.g.role = 'test'
+    r = await runIn(dir, ['premise:refine', 'g', '--face', 'cook', '--state-id', 'fs_r'])
+    eq('refine: a test is refused, nothing billed', [r.code, R.calls.filter((c) => c.url === '/v1/choices' || c.url === '/v1/decisions').length], [1, 0])
+    fs.rmSync(dir, {recursive: true, force: true})
   } finally {
     srv.close()
     fs.rmSync(home, {recursive: true, force: true})

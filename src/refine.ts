@@ -142,10 +142,10 @@ export function plainKey(text: string, limit = 120): string {
     const at = cut.lastIndexOf(' ')
     t = at > limit / 3 ? cut.slice(0, at) : t.slice(0, limit)
   }
-  t = t.replace(/[\s,;:.\-–—]+$/, '').trim()
+  t = t.replace(/[\s,;:.\-\u2013\u2014]+$/, '').trim()
   // a cut never leaves a parenthesis open: drop the unclosed part
   while ((t.match(/\(/g) ?? []).length > (t.match(/\)/g) ?? []).length) {
-    t = t.slice(0, t.lastIndexOf('(')).replace(/[\s,;:.\-–—]+$/, '').trim()
+    t = t.slice(0, t.lastIndexOf('(')).replace(/[\s,;:.\-\u2013\u2014]+$/, '').trim()
   }
   return t
 }
